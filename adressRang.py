@@ -25,7 +25,7 @@ def postgres_db_connection():
     """
     try:
         con = psycopg2.connect(
-            host="10.137.244.158",
+            host="10.137.173.71",
             port="5432",
             database="ggg",
             user="ggg",
@@ -380,14 +380,7 @@ hsn_long.osm_id
 
 if __name__ == "__main__":
 
-    # Create test dataframe
-    test_addresses = [
-        ("11-97 DE ENTREE AMSTERDAM 1101 HE NLD", 52.31177019833552, 4.939634271503648),
-        ("Aalsterweg 303, 5644 RL Eindhoven, NL", 51.41176179168882, 5.482757611072691),
-        ("Ammunitiehaven 343 2511 XM s Gravenhage NL",52.07742315143409,4.3212179573462075,),
-        ("Baarsweg 148, 3192 VB, Hoogvliet Rotterdam, Ne...",51.856975720153564,4.350903401715045,),
-        ("Baas Gansendonckstraat 3, 1061CZ Amsterdam, NL",52.37733757641722,4.840407597295104, ),
-                    ]
+
 
     test_df = pd.DataFrame(test_addresses, columns=["searched_query", "lat", "lon"])
     test_df["coordinates"] = test_df.apply(lambda x: shapely.geometry.Point(x.lon, x.lat), axis=1)

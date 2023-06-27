@@ -6,8 +6,10 @@ from shapely.wkt import loads
 from map_content.utils import utils
 
 
+
+
 def find_openmap_schema(
-    country: str, latest: bool or None = True, credentials: dict or None = None
+        country: str, latest: bool or None = True, credentials: dict or None = None
 ) -> pd.DataFrame:
     """Gets the schema in the Openmap's 3G database to make a spatial query
 
@@ -44,7 +46,7 @@ def find_openmap_schema(
         "_[0-9]+.*", "", regex=True
     )
     country_schemas["is_latest"] = (
-        country_schemas.date == country_schemas.groupby("schema").date.max()[0]
+            country_schemas.date == country_schemas.groupby("schema").date.max()[0]
     )
     country_schemas["country"] = country
 
@@ -56,6 +58,7 @@ def find_openmap_schema(
     else:
         return country_schemas
 
+
 con = psycopg2.connect(
     host="10.137.173.71",
     port="5432",
@@ -63,6 +66,7 @@ con = psycopg2.connect(
     user="ggg",
     password="ok"
 )
+
 
 def postgres_db_connection():
     """
@@ -83,8 +87,9 @@ def postgres_db_connection():
         print("Exception TYPE:", type(error))
 
 
-
 schemaname = find_openmap_schema("gbr").nspname[0]
+
+
 # Query all schemas in Openmap database
 
 def ovAdminAreaOrder8Area(schema):
@@ -96,6 +101,7 @@ def ovAdminAreaOrder8Area(schema):
     # Convert the WKB coordinates to Shapely geometries
     # AdminOrdr8Area['geometry'] = AdminOrdr8Area['way'].apply(wkb.loads)
     return AdminOrdr8Area
+
 
 query_coordinates = ovAdminAreaOrder8Area(schemaname).head(1).geometry.values[0]
 
@@ -110,18 +116,20 @@ query = """
 with sample as (select index_searched_query
                         ,st_geomfromtext (coordinates, 4326)  coordinates
                          from (VALUES (0, '{query_coordinates}')) as t (index_searched_query, coordinates))
-                              
+
 , tags as (
 select distinct skeys(tags) keys
 from "{schema_name}".planet_osm_polygon pop 
 where admin_level  in ('4', '8')
 )
 
+
 , name_tags as (
 select * 
 from tags
 where (keys like '%name:%' or keys like '%alt%name') and keys not like '%pronunciation%'
 )   
+
 
 , hsn_tags as (
 select distinct skeys(tags) keys 
@@ -130,21 +138,17 @@ where "addr:housenumber" is not null or tags::text like '%addr:housenumber%'
 
 )
 
+
+
 , hsn_keys as (
 select * from hsn_tags where (keys like '%addr:housenumber%')
 
 )
-
-, buffers as (
+,buffers as (
 select 
     sample.index_searched_query
 ,   sample.coordinates
 ,   coordinates as buffer
-,   postcode.postcode as postal_code
-,   city.name as city_name
-,   city.name_tags_array as city_names
-,   state.name as state_name
-,   state.name_tags_array as state_names
 ,   road.road as road_name
 ,   road.name_tags_array as road_names
 from sample
@@ -158,67 +162,15 @@ left join lateral (
                 ORDER BY road.way <-> sample.coordinates
 
                 LIMIT 1
-                ) AS road
-on true
-
-
-left outer join(
-
-    select index_searched_query, array_agg(distinct postcode) as postcode 
-    from
-            (Select
-            sample.index_searched_query,
-            way,
-        --   array_agg( array_remove(ARRAY[tags->'postal_code',tags->'addr:postal_code',tags->'postcode', tags->'addr:postcode'], null) ) postcode
-            unnest(array_remove(tags->array['postal_code', 'addr:postal_code', 'postcode', 'addr:postcode'], null)) as postcode
-            From "{schema_name}".planet_osm_polygon polygon
-
-            join sample on ST_Intersects(sample.coordinates, polygon.way)
-
-            Where (tags?|ARRAY['postal_code','addr:postal_code','postcode','addr:postcode'] AND boundary = 'administrative')
-            OR boundary = 'postal_code'
-
-            ) a
-
-    where postcode is not null
-    group by index_searched_query    
-
-                ) AS postcode
-on postcode.index_searched_query = sample.index_searched_query
-
-
-left outer join (
-                select admin_level , place, name, way,
-                array_remove(tags->array((select keys from name_tags)), null) as name_tags_array
-                from "{schema_name}".planet_osm_polygon pop 
-                where admin_level in ('8')
-                and boundary ='administrative'
-
-                ) city 
-on ST_Intersects(sample.coordinates, city.way)
-
-
-left outer join (
-    select admin_level , place, name, way,
-    array_remove(tags->array((select keys from name_tags)), null) as name_tags_array
-    from "{schema_name}".planet_osm_polygon pop 
-    where admin_level in ('4')
-    and boundary ='administrative'
-
-    ) state 
-        on ST_Intersects(sample.coordinates, state.way)
-)
-
+                ) AS road 
+ on true
+ )
+ 
 
 ,  address_ranges as (
 select 
 buffers.index_searched_query
 ,   buffers.coordinates
-,   buffers.postal_code
-,   buffers.city_name
-,   buffers.city_names
-,   buffers.state_name
-,   buffers.state_names
 ,   buffers.road_name
 ,   buffers.road_names
 ,   hnr.osm_id
@@ -251,23 +203,18 @@ left join "{schema_name}".planet_osm_point pop
 on pop.osm_id = address_ranges.nodes
 
 where pop.tags is not null
-
 )
+
 
 ,   hsn_long as (
 select 
 hsn.osm_id
 ,   hsn.index_searched_query
 ,   hsn.coordinates
-,   hsn.postal_code
-,   hsn.city_name
-,   hsn.city_names
-,   hsn.state_name
-,   hsn.state_names
-,   hsn.road_name
-,   hsn.road_names
 ,   hsn.tags as tags_network
 ,   hsn.road_name_way
+,   hsn.road_name
+,   hsn.road_names
 ,   hsn.interpolation
 ,   hsn.interpolation_tag
 ,   hsn.way
@@ -280,38 +227,31 @@ from hsn
 
 
 select 
-hsn_long.osm_id
+	hsn_long.osm_id
+,   hsn_long.road_name
+,   hsn_long.way
+,   min(range_hsn) as min_hsn
+,   max(range_hsn) as max_hsn	
 ,   hsn_long.index_searched_query
 ,   '{date}' as date
 ,   '{version}' as version
 ,   hsn_long.coordinates
-,   hsn_long.postal_code
-,   hsn_long.city_name
-,   hsn_long.city_names
-,   hsn_long.state_name
-,   hsn_long.state_names
-,   hsn_long.road_name
-,   hsn_long.road_names
 ,   hsn_long.tags_network
 ,   hsn_long.road_name_way
 ,   hsn_long.interpolation
+
+,   hsn_long.road_names
 ,   hsn_long.interpolation_tag
-,   hsn_long.way
+
 ,   hsn_long.name
 ,   first_tags_hsn as tags
-,   min(range_hsn) as min_hsn
-,   max(range_hsn) as max_hsn
+
 ,   array_agg(distinct range_hsn) as intermediates
 from hsn_long
 group by 
-hsn_long.osm_id
+	hsn_long.osm_id
 ,   hsn_long.index_searched_query
 ,   hsn_long.coordinates
-,   hsn_long.postal_code
-,   hsn_long.city_name
-,   hsn_long.city_names
-,   hsn_long.state_name
-,   hsn_long.state_names
 ,   hsn_long.road_name
 ,   hsn_long.road_names
 ,   hsn_long.tags_network
@@ -322,14 +262,21 @@ hsn_long.osm_id
 ,   hsn_long.name
 ,   first_tags_hsn
 
-"""
+order by hsn_long.osm_id
 
+
+
+"""
 
 adminAreaAa8 = query.replace("{schema_name}", str(schemaname))
 
-addresRanges = adminAreaAa8.replace('{query_coordinates}',query_coordinates)
+addresRanges = adminAreaAa8.replace('{query_coordinates}', query_coordinates)
 
 AdminOrdr8Area = pd.read_sql(addresRanges, postgres_db_connection())
+
+
+
+
 
 # Create new geometry column from the "way" column
 AdminOrdr8Area['geometry'] = AdminOrdr8Area['way'].apply(lambda way: loads(way.split(';')[0]))
@@ -339,7 +286,8 @@ spatial_query_result = gpd.GeoDataFrame(AdminOrdr8Area, geometry='geometry')
 
 # Convert non-compatible columns to string
 non_compatible_types = ['object', 'bool']  # Add more types if needed
-non_string_columns = spatial_query_result.select_dtypes(exclude=['string', 'int', 'float', 'datetime', 'geometry']).columns
+non_string_columns = spatial_query_result.select_dtypes(
+    exclude=['string', 'int', 'float', 'datetime', 'geometry']).columns
 
 for column in non_string_columns:
     if spatial_query_result[column].dtype.name in non_compatible_types:
