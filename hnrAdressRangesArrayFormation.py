@@ -559,9 +559,7 @@ hsn.osm_id
 
 from hsn 
 )
-
-
-select 
+,addressrangesfinal as (select 
 	hsn_long.osm_id
 ,   hsn_long.road_name
 ,   hsn_long.way
@@ -570,23 +568,20 @@ select
 ,   hsn_long.index_searched_query
 ,   '{date}' as date
 ,   '{version}' as version
-,   hsn_long.coordinates
+,   ST_AsText(hsn_long.coordinates) as coordinates
 ,   hsn_long.tags_network
 ,   hsn_long.road_name_way
 ,   hsn_long.interpolation
-
 ,   hsn_long.road_names
 ,   hsn_long.interpolation_tag
-
 ,   hsn_long.name
 ,   first_tags_hsn as tags
-
 ,   array_agg(distinct range_hsn) as intermediates
 from hsn_long
 group by 
 	hsn_long.osm_id
 ,   hsn_long.index_searched_query
-,   hsn_long.coordinates
+,   coordinates
 ,   hsn_long.road_name
 ,   hsn_long.road_names
 ,   hsn_long.tags_network
@@ -596,8 +591,20 @@ group by
 ,   hsn_long.way
 ,   hsn_long.name
 ,   first_tags_hsn
+order by hsn_long.osm_id)
 
-order by hsn_long.osm_id
+select 
+plarea.osm_id as place_osm_id ,
+plarea.name as place_name, 
+plarea.reg_code as reg_code, 
+plarea.region as place_region, 
+plarea.cntry_code as place_cntry_code,
+plarea.country as place_country, 
+ST_AsText(plarea.way) as place_way,
+addressrangesfinal.*
+from "ade_wrl_23250_000_eur_gbr".planet_osm_polygon as plarea
+INNER JOIN addressrangesfinal ON ST_Intersects(ST_SetSRID(addressrangesfinal.way, 4326), ST_SetSRID(plarea.way, 4326))
+where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30'
 
 """
 
@@ -615,37 +622,59 @@ preprocess_hnr_hsn_df = preprocess_hnr_hsn(parse_hnr_tags_df)
 get_hnr_df_DF = get_hnr_df(preprocess_hnr_hsn_df)
 
 # # Create new geometry column from the "way" column
-# AdminOrdr8Area['geometry'] = AdminOrdr8Area['way'].apply(lambda way: loads(way.split(';')[0]))
+get_hnr_df_DF['geometry'] = get_hnr_df_DF['way'].apply(lambda way: loads(way.split(';')[0]))
 #
 # # Create a GeoPandas DataFrame
-# spatial_query_result = gpd.GeoDataFrame(AdminOrdr8Area, geometry='geometry')
+spatial_query_result = gpd.GeoDataFrame(get_hnr_df_DF, geometry='geometry')
+
+# Convert non-compatible columns to string
+non_compatible_types = ['object', 'bool']  # Add more types if needed
+non_string_columns = spatial_query_result.select_dtypes(
+    exclude=['string', 'int', 'float', 'datetime', 'geometry']).columns
+
+for column in non_string_columns:
+    if spatial_query_result[column].dtype.name in non_compatible_types:
+        spatial_query_result[column] = spatial_query_result[column].astype(str)
+
+# Export to GeoPackage Adress Ranges
+pathline = r"E:\\Amol\\9_addressRangesPython\\AddrssRangeslineArray.gpkg"
+
+spatial_query_result.to_file(pathline,layer='AddrssRanges', driver='GPKG')
+
+
+#### create Polygon Geometry Admin order 8 area
+AA8gdf = spatial_query_result.copy()
+
+# Remove the existing "coordinates" column
+AA8gdf.drop(columns='geometry', inplace=True)
 #
-# # Convert non-compatible columns to string
-# non_compatible_types = ['object', 'bool']  # Add more types if needed
-# non_string_columns = spatial_query_result.select_dtypes(
-#     exclude=['string', 'int', 'float', 'datetime', 'geometry']).columns
-#
-# for column in non_string_columns:
-#     if spatial_query_result[column].dtype.name in non_compatible_types:
-#         spatial_query_result[column] = spatial_query_result[column].astype(str)
-#
+AA8gdf_duplicates = AA8gdf.drop_duplicates(subset=['coordinates'])
+
+# Create new geometry column from the "way" column
+AA8gdf_duplicates['geometry'] = AA8gdf_duplicates['coordinates'].apply(lambda coordinates: loads(coordinates.split(';')[0]))
+
+# # Create a GeoPandas DataFrame
+admiAreaOrder8AreaGDF = gpd.GeoDataFrame(AA8gdf_duplicates, geometry='geometry')
 # # Export to GeoPackage
-# pathline = r"E:\\Amol\\9_addressRangesPython\\PolygonAddrssRangesline.gpkg"
+
 #
-# spatial_query_result.to_file(pathline, driver='GPKG')
-# #
-# # # create Polygon Geometry
-# # gdf = spatial_query_result.copy()
-# #
-# # # Remove the existing "coordinates" column
-# # gdf.drop(columns='geometry', inplace=True)
-# #
-# # df_no_duplicates_specific = gdf.drop_duplicates(subset=['way'])
-# #
-# # # Create new geometry column from the "way" column
-# # df_no_duplicates_specific['geometry'] = df_no_duplicates_specific['coordinates'].apply(lambda way: loads(way.split(';')[0]))
-# #
-# # # Export to GeoPackage
-# # pathline = r"E:\\Amol\\9_addressRangesPython\\PolygonAddrssRangesline.gpkg"
-# #
-# # df_no_duplicates_specific.to_file(pathline, driver='GPKG')
+admiAreaOrder8AreaGDF.to_file(pathline,layer='AdminOrder8Area', driver='GPKG')
+
+
+#### create Polygon Geometry Place name
+placegdf = spatial_query_result.copy()
+
+# Remove the existing "coordinates" column
+placegdf.drop(columns='geometry', inplace=True)
+#
+placegdf_duplicates = placegdf.drop_duplicates(subset=['place_way'])
+
+# Create new geometry column from the "way" column
+placegdf_duplicates['geometry'] = placegdf_duplicates['place_way'].apply(lambda place_way: loads(place_way.split(';')[0]))
+
+# # Create a GeoPandas DataFrame
+placeGDF = gpd.GeoDataFrame(placegdf_duplicates, geometry='geometry')
+# # Export to GeoPackage
+
+#
+placeGDF.to_file(pathline,layer='place', driver='GPKG')
