@@ -3,11 +3,18 @@ import numpy as np
 import pandas as pd
 import psycopg2
 import typing
+from shapely.geometry import LineString, Point
 from shapely import wkb
 import geopandas as gpd
 from shapely.wkt import loads
 from map_content.utils import utils
 # from map_content.utils.openmap import get_alphabetic_hnr_df, get_numeric_hnr_df
+
+
+# Function to calculate the center point of a LineString
+def calculate_center_point(geometry):
+    line = LineString(geometry)
+    return line.centroid
 
 def parse_hnr_tags(df: pd.DataFrame) -> pd.DataFrame:
     """Parses the OSM tags to extract house number range info from way
@@ -395,7 +402,7 @@ def find_openmap_schema(
 
 
 con = psycopg2.connect(
-    host="10.137.173.71",
+    host="10.137.173.68",
     port="5432",
     database="ggg",
     user="ggg",
@@ -410,7 +417,7 @@ def postgres_db_connection():
     """
     try:
         con = psycopg2.connect(
-            host="10.137.173.71",
+            host="10.137.173.68",
             port="5432",
             database="ggg",
             user="ggg",
@@ -602,7 +609,7 @@ plarea.cntry_code as place_cntry_code,
 plarea.country as place_country, 
 ST_AsText(plarea.way) as place_way,
 addressrangesfinal.*
-from "ade_wrl_23250_000_eur_gbr".planet_osm_polygon as plarea
+from "{schema_name}".planet_osm_polygon as plarea
 INNER JOIN addressrangesfinal ON ST_Intersects(ST_SetSRID(addressrangesfinal.way, 4326), ST_SetSRID(plarea.way, 4326))
 where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30'
 
@@ -621,12 +628,66 @@ preprocess_hnr_hsn_df = preprocess_hnr_hsn(parse_hnr_tags_df)
 
 get_hnr_df_DF = get_hnr_df(preprocess_hnr_hsn_df)
 
-selectedColumnsGetHnr_DF = get_hnr_df_DF[['osm_id','place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array']]
 
-df_exploded = get_hnr_df_DF.explode('hnr_array')
+# Apply the function to the 'way' column and save the result in 'PointLocation' column
+get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
+
+# Remove square brackets and convert array to string using lambda function
+get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0])
+
+
+
+selectedColumnsGetHnr_DF = get_hnr_df_DF[['osm_id','place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array','PointLocation']]
+
+# Explode functionality for Array
+df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
 df_exploded['hnr_Number'] = df_exploded['hnr_array']
 
 df_exploded.reset_index(drop=True, inplace=True)
+
+
+# Create the Error DataFrame
+df_exploded['Error'] = ''
+houseNumberError = pd.DataFrame()
+
+# Check conditions and append output records
+for index, row in df_exploded.iterrows():
+    if row['min_hsn'] == row['max_hsn']:
+        row['Error'] = 'Array Issue'
+        houseNumberError = houseNumberError.append(row)
+
+
+# Select the columns of interest
+columns_to_check = ['place_name', 'street', 'hnr_Number']
+# Check for duplicate records based on the selected columns
+duplicates = df_exploded.duplicated(subset=columns_to_check,keep=False)
+
+# Filter the DataFrame to show only the duplicate records
+duplicate_records = df_exploded[duplicates]
+
+# Assign a unique ID to each duplicate group
+duplicate_records['group_id'] = duplicate_records.groupby(['place_name', 'street', 'hnr_Number']).ngroup()
+
+
+# Sort the DataFrame based on 'hnr_Number', 'street', and 'place_name' columns
+sorted_duplicates = duplicate_records.sort_values(by=['hnr_Number', 'street', 'place_name'])
+
+# Reorder the columns
+reordered_columns = ['osm_id','hnr_Number', 'street', 'place_name', 'group_id','min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array','PointLocation','way']
+sorted_df = sorted_duplicates[reordered_columns]
+
+# Display the duplicate records
+print(sorted_df)
+
+
+# Reset index of Error DataFrame
+houseNumberError.reset_index(drop=True, inplace=True)
+
+
+
+
+# if selectedColumnsGetHnr_DF[]
+
 
 df_exploded.to_csv(r"E:\\Amol\\9_addressRangesPython\\ArryExplodAddrssRanges.csv")
 
