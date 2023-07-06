@@ -678,8 +678,8 @@ houseNumberArrayRemove = houseNumberError.drop(arrayColumnRemove, axis=1)
 array_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'hnr_numeric_mixed_array','PointLocation']
 
 houseNumberArray = houseNumberArrayRemove[array_columns]
-# Remove duplicates and keep the first occurrence
-houseNumberArray.drop_duplicates(subset=['osm_id'], keep='first', inplace=True)
+# # Remove duplicates and keep the first occurrence
+# houseNumberArray.drop_duplicates(subset=['osm_id'], keep='first', inplace=True)
 
 # Array Issue
 houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
@@ -710,9 +710,14 @@ sorted_df = sorted_duplicates[reordered_columns]
 
 # Drop multiple columns
 houseNumberRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array']
-sorted_df.drop(houseNumberRemove, axis=1)
+hnrAddressSorted = sorted_df.drop(houseNumberRemove, axis=1)
 
-sorted_df.to_csv(r"E:\\Amol\\9_addressRangesPython\\2.AddrssRangesDuplicateHNR.csv")
+# Filter the DataFrame based on group_id count and remove duplicates
+# if 'group_id' has only two records and both are duplicate remove those
+hnrAddfiltered = hnrAddressSorted.groupby('group_id').filter(lambda x: len(x) == 2).drop_duplicates(subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
+
+
+hnrAddfiltered.to_csv(r"E:\\Amol\\9_addressRangesPython\\2.AddrssRangesDuplicateHNR.csv")
 # Display the duplicate records
 # print(sorted_df)
 
