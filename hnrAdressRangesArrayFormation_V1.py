@@ -21,12 +21,25 @@ def Old_correct_hnr_array(arr):
     return corrected_arr
 
 
-def correct_hnr_array(arr):
+def old_v1correct_hnr_array(arr):
     if arr is None:
         return []
     corrected_arr = []
     for item in arr:
         if ';' in item:
+            corrected_arr.extend(item.split(';'))
+        else:
+            corrected_arr.append(item)
+    return corrected_arr
+
+def correct_hnr_array(arr):
+    if arr is None:
+        return []
+    corrected_arr = []
+    for item in arr:
+        if isinstance(item, int):
+            corrected_arr.append(item)
+        elif ';' in item:
             corrected_arr.extend(item.split(';'))
         else:
             corrected_arr.append(item)
@@ -682,18 +695,15 @@ for index, row in get_hnr_df_DF.iterrows():
         # Copy the records from the existing 'hnr_numeric_mixed_array' column
         get_hnr_df_DF.at[index, 'hnr_array'] = hnr_numeric_mixed_array
 
-
+# Apply the correction function to the "hnr_array" column
+get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
 
 # Remove square brackets and convert array to string using lambda function
 get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0])
 
-# Remove multiple columns
-columns_to_remove = ['place_way', 'way','coordinates']
-df = get_hnr_df_DF.drop(columns_to_remove, axis=1)
+
 
 selectedColumnsGetHnr_DF = get_hnr_df_DF[['osm_id','place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array','PointLocation']]
-
-
 
 
 # Explode functionality for Array
@@ -701,7 +711,6 @@ df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
 df_exploded['hnr_Number'] = df_exploded['hnr_array']
 
 df_exploded.reset_index(drop=True, inplace=True)
-
 
 # Create the Error DataFrame
 df_exploded['Error'] = ''
@@ -725,10 +734,10 @@ array_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'hnr_numeric_mi
 
 houseNumberArray = houseNumberArrayRemove[array_columns]
 # # Remove duplicates and keep the first occurrence
-# houseNumberArray.drop_duplicates(subset=['osm_id'], keep='first', inplace=True)
+houseNumberArray.drop_duplicates(subset=['osm_id'], keep='first', inplace=True)
 
 # Array Issue
-# houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
+houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
 
 print("Array Done")
 
@@ -763,7 +772,7 @@ hnrAddressSorted = sorted_df.drop(houseNumberRemove, axis=1)
 hnrAddfiltered = hnrAddressSorted.groupby('group_id').filter(lambda x: len(x) == 2).drop_duplicates(subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
 
 
-# hnrAddfiltered.to_csv(r"E:\\Amol\\9_addressRangesPython\\2.AddrssRangesDuplicateHNR.csv")
+hnrAddfiltered.to_csv(r"E:\\Amol\\9_addressRangesPython\\2.AddrssRangesDuplicateHNR.csv")
 # Display the duplicate records
 # print(sorted_df)
 
