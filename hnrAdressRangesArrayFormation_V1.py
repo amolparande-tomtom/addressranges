@@ -11,7 +11,7 @@ from map_content.utils import utils
 # from map_content.utils.openmap import get_alphabetic_hnr_df, get_numeric_hnr_df
 
 # Function to correct the "hnr_array" column
-def correct_hnr_array(arr):
+def Old_correct_hnr_array(arr):
     corrected_arr = []
     for item in arr:
         if ';' in item:
@@ -19,6 +19,19 @@ def correct_hnr_array(arr):
         else:
             corrected_arr.append(item)
     return corrected_arr
+
+
+def correct_hnr_array(arr):
+    if arr is None:
+        return []
+    corrected_arr = []
+    for item in arr:
+        if ';' in item:
+            corrected_arr.extend(item.split(';'))
+        else:
+            corrected_arr.append(item)
+    return corrected_arr
+
 
 # Function to calculate the center point of a LineString
 def calculate_center_point(geometry):
@@ -426,7 +439,7 @@ def postgres_db_connection():
     """
     try:
         con = psycopg2.connect(
-            host="10.137.173.68",
+            host="10.137.173.70",
             port="5432",
             database="ggg",
             user="ggg",
@@ -637,18 +650,51 @@ preprocess_hnr_hsn_df = preprocess_hnr_hsn(parse_hnr_tags_df)
 
 get_hnr_df_DF = get_hnr_df(preprocess_hnr_hsn_df)
 
+
 # Apply the correction function to the "hnr_array" column
 get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
 
+# Apply the correction function to the "intermediates" column
+get_hnr_df_DF['intermediates'] = get_hnr_df_DF['intermediates'].apply(correct_hnr_array)
+
+#### intermediates,nterpolation == irregular ######
+
+# get_hnr_df_DF['hnr_array'] = get_hnr_df_DF.apply(lambda row: row['intermediates'] + [str(row['min_hsn_numeric']), str(row['max_hsn_numeric'])] if row['interpolation'] == 'irregular' and row['intermediates'] is not None else row['hnr_numeric_mixed_array'], axis=1)
+
+
 # Apply the function to the 'way' column and save the result in 'PointLocation' column
-get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
+# get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
+
+# Iterate over each row in the DataFrame
+for index, row in get_hnr_df_DF.iterrows():
+    interpolation = row['interpolation']
+    intermediates = row['intermediates']
+    min_hsn_numeric = row['min_hsn_numeric']
+    max_hsn_numeric = row['max_hsn_numeric']
+    hnr_numeric_mixed_array = row['hnr_numeric_mixed_array']
+
+    # Check if 'nterpolation' is 'irregular' and 'intermediates' is not null
+    if interpolation == 'irregular' and intermediates is not None and pd.notnull(intermediates).any():
+        # Create the 'hnr_array' by adding 'min_hsn_numeric' and 'max_hsn_numeric' to 'intermediates'
+        hnr_array = [min_hsn_numeric, max_hsn_numeric] + intermediates
+        get_hnr_df_DF.at[index, 'hnr_array'] = hnr_array
+    else:
+        # Copy the records from the existing 'hnr_numeric_mixed_array' column
+        get_hnr_df_DF.at[index, 'hnr_array'] = hnr_numeric_mixed_array
+
+
 
 # Remove square brackets and convert array to string using lambda function
 get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0])
 
-
+# Remove multiple columns
+columns_to_remove = ['place_way', 'way','coordinates']
+df = get_hnr_df_DF.drop(columns_to_remove, axis=1)
 
 selectedColumnsGetHnr_DF = get_hnr_df_DF[['osm_id','place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array','PointLocation']]
+
+
+
 
 # Explode functionality for Array
 df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
@@ -682,7 +728,7 @@ houseNumberArray = houseNumberArrayRemove[array_columns]
 # houseNumberArray.drop_duplicates(subset=['osm_id'], keep='first', inplace=True)
 
 # Array Issue
-houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
+# houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
 
 print("Array Done")
 
@@ -717,7 +763,7 @@ hnrAddressSorted = sorted_df.drop(houseNumberRemove, axis=1)
 hnrAddfiltered = hnrAddressSorted.groupby('group_id').filter(lambda x: len(x) == 2).drop_duplicates(subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
 
 
-hnrAddfiltered.to_csv(r"E:\\Amol\\9_addressRangesPython\\2.AddrssRangesDuplicateHNR.csv")
+# hnrAddfiltered.to_csv(r"E:\\Amol\\9_addressRangesPython\\2.AddrssRangesDuplicateHNR.csv")
 # Display the duplicate records
 # print(sorted_df)
 
