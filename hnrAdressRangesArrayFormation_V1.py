@@ -10,6 +10,31 @@ from shapely.wkt import loads
 from map_content.utils import utils
 # from map_content.utils.openmap import get_alphabetic_hnr_df, get_numeric_hnr_df
 
+def StartAndEndHNRSame(dexploded_Df):
+    """
+    Starting and Ending House Number Same
+    :return:
+    """
+    houseNumberError = pd.DataFrame()
+    # Check conditions and append output records
+    for index, row in dexploded_Df.iterrows():
+        if row['min_hsn'] == row['max_hsn']:
+            row['Error'] = 'Array Issue'
+            houseNumberError = houseNumberError.append(row, ignore_index=True)
+    # # Reset index of Error DataFrame
+    # houseNumberError.reset_index(drop=True, inplace=True)
+    # Remove multiple columns
+    arrayColumnRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array', 'Error']
+    houseNumberArrayRemove = houseNumberError.drop(arrayColumnRemove, axis=1)
+    # Array Reorder the columns
+    array_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'hnr_numeric_mixed_array', 'PointLocation']
+    houseNumberArray = houseNumberArrayRemove[array_columns].copy()
+    # Remove duplicates and keep the first occurrence
+    houseNumberArray.drop_duplicates(subset=['osm_id'], keep='first', inplace=True)
+    return houseNumberArray
+
+
+
 # Function to correct the "hnr_array" column
 def Old_correct_hnr_array(arr):
     corrected_arr = []
@@ -711,47 +736,27 @@ df_exploded['hnr_Number'] = df_exploded['hnr_array']
 
 df_exploded.reset_index(drop=True, inplace=True)
 
-# Create the Error DataFrame
-df_exploded['Error'] = ''
-houseNumberError = pd.DataFrame()
 
-# Check conditions and append output records
-for index, row in df_exploded.iterrows():
-    if row['min_hsn'] == row['max_hsn']:
-        row['Error'] = 'Array Issue'
-        houseNumberError = houseNumberError.append(row)
-
-
-# # Reset index of Error DataFrame
-houseNumberError.reset_index(drop=True, inplace=True)
-# Remove multiple columns
-arrayColumnRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array', 'Error']
-houseNumberArrayRemove = houseNumberError.drop(arrayColumnRemove, axis=1)
-
-# Array Reorder the columns
-array_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'hnr_numeric_mixed_array','PointLocation']
-
-houseNumberArray = houseNumberArrayRemove[array_columns]
-# # Remove duplicates and keep the first occurrence
-houseNumberArray.drop_duplicates(subset=['osm_id'], keep='first', inplace=True)
+# First output  Starting and Ending point Same
+houseNumberArray = StartAndEndHNRSame(df_exploded)
 
 # Array Issue
-houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
-
+# houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
+#
 print("Array Done")
 
 ###########################House Number Duplicate#############################
 
 # Select the columns of interest
-columns_to_check = ['place_name', 'street', 'hnr_Number']
+columns_to_check = ['hnr_Number','street','place_name']
 # Check for duplicate records based on the selected columns
 duplicates = df_exploded.duplicated(subset=columns_to_check,keep=False)
 
-# Filter the DataFrame to show only the duplicate records
+# Filter the DataFrame to select only the duplicate records
 duplicate_records = df_exploded[duplicates]
 
 # Assign a unique ID to each duplicate group
-duplicate_records['group_id'] = duplicate_records.groupby(['place_name', 'street', 'hnr_Number']).ngroup()
+duplicate_records['group_id'] = duplicate_records.groupby(['hnr_Number','street','place_name']).ngroup()
 
 
 # Sort the DataFrame based on 'hnr_Number', 'street', and 'place_name' columns
@@ -768,10 +773,24 @@ hnrAddressSorted = sorted_df.drop(houseNumberRemove, axis=1)
 
 # Filter the DataFrame based on group_id count and remove duplicates
 # if 'group_id' has only two records and both are duplicate remove those
-hnrAddfiltered = hnrAddressSorted.groupby('group_id').filter(lambda x: len(x) == 2).drop_duplicates(subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
+# hnrAddfiltered = hnrAddressSorted.groupby('group_id').filter(lambda x: len(x) == 2).drop_duplicates(subset=['osm_id', 'hnr_Number', 'street', 'place_name','group_id'], keep=False)
 
+hnrAddfiltered_two = pd.DataFrame(columns=hnrAddressSorted.columns)  # DataFrame for groups with exactly two rows
+hnrAddfiltered_other = pd.DataFrame(columns=hnrAddressSorted.columns)  # DataFrame for groups with other lengths
 
-hnrAddfiltered.to_csv(r"E:\\Amol\\9_addressRangesPython\\2.AddrssRangesDuplicateHNR.csv")
+for _, group in hnrAddressSorted.groupby('group_id'):
+    if len(group) == 2:  # Check if the group has exactly two rows remove Same Duplicate
+        hnrAddfiltered_two = hnrAddfiltered_two.append(group)  # Append the group to hnrAddfiltered_two DataFrame
+    else: # else Do nothing
+        hnrAddfiltered_other = hnrAddfiltered_other.append(group)  # Append the group to hnrAddfiltered_other DataFrame
+
+hnrAddfiltered_two = hnrAddfiltered_two.drop_duplicates(subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
+
+frames = [hnrAddfiltered_two, hnrAddfiltered_other]
+# Merge DataFrame
+AddrssRangesDuplicateHNR = pd.concat(frames)
+
+AddrssRangesDuplicateHNR.to_csv(r"E:\\Amol\\9_addressRangesPython\\2.AddrssRangesDuplicateHNR.csv")
 # Display the duplicate records
 # print(sorted_df)
 
