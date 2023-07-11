@@ -676,7 +676,7 @@ get_hnr_df_DF['intermediates'] = get_hnr_df_DF['intermediates'].apply(correct_hn
 
 
 # Apply the function to the 'way' column and save the result in 'PointLocation' column
-# get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
+get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
 
 # Iterate over each row in the DataFrame
 for index, row in get_hnr_df_DF.iterrows():
@@ -687,7 +687,8 @@ for index, row in get_hnr_df_DF.iterrows():
     hnr_numeric_mixed_array = row['hnr_numeric_mixed_array']
 
     # Check if 'nterpolation' is 'irregular' and 'intermediates' is not null
-    if interpolation == 'irregular' and intermediates is not None and pd.notnull(intermediates).any():
+    # if interpolation == 'irregular' and intermediates is not None and pd.notnull(intermediates).any():
+    if (interpolation in ['irregular', 'odd', 'numeric_mixed', 'even']) and pd.notnull(intermediates).any():
         # Create the 'hnr_array' by adding 'min_hsn_numeric' and 'max_hsn_numeric' to 'intermediates'
         hnr_array = [min_hsn_numeric, max_hsn_numeric] + intermediates
         get_hnr_df_DF.at[index, 'hnr_array'] = hnr_array
@@ -702,9 +703,7 @@ get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
 get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0])
 
 
-
 selectedColumnsGetHnr_DF = get_hnr_df_DF[['osm_id','place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array','PointLocation']]
-
 
 # Explode functionality for Array
 df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
