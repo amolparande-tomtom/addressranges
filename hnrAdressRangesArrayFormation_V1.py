@@ -4,11 +4,60 @@ import pandas as pd
 import psycopg2
 import typing
 from shapely.geometry import LineString, Point
+from math import radians, sin, cos, sqrt, atan2
 from shapely import wkb
 import geopandas as gpd
 from shapely.wkt import loads
 from map_content.utils import utils
+
+
 # from map_content.utils.openmap import get_alphabetic_hnr_df, get_numeric_hnr_df
+def truncate(n: float, decimals: int = 0) -> int:
+    """Simple function which truncates an incoming float value (n) and returns its integer value
+    based on its multiplier value, later divided by the same multiplier value.
+    :param n: Input numerical value, float type.
+    :type n: flaot
+    :param decimals: Input integer which defines the number of decimal point to return, defaults to 0
+    :type decimals: int, optional
+    :return:Output integer value after the truncate process of the input value (n).
+    :rtype: int
+    """
+
+    multiplier = 10 ** decimals
+    return int(n * multiplier) / multiplier
+
+
+def haversine_distance(lt1: float,
+                       ln1: float,
+                       lt2: float,
+                       ln2: float) -> float:
+    """Function which calculates the distance in meters between two XY coodinates. The function requires
+    the latitude and longitude for each point. At the end of the function, we truncate the output distance
+    value with a maximun of 4 decimal points.
+    :param lt1: Latitude value of first coordinate point.
+    :type lt1: float
+    :param ln1: Longitude value of first coordinate point.
+    :type ln1: float
+    :param lt2: Latitude value of second coordinate point.
+    :type lt2: float
+    :param ln2: Longitude value of second coordinate point.
+    :type ln2: float
+    :return: Distance between point in meters.
+    :rtype: float
+    """
+
+    R = 6373.0  # approximate radius of earth in km
+    lat1 = radians(lt1)
+    lon1 = radians(ln1)
+    lat2 = radians(lt2)
+    lon2 = radians(ln2)
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    distance = truncate(R * c, 4) * 1000
+    return distance
+
 
 def StartAndEndHNRSame(dexploded_Df):
     """
@@ -34,7 +83,6 @@ def StartAndEndHNRSame(dexploded_Df):
     return houseNumberArray
 
 
-
 # Function to correct the "hnr_array" column
 def Old_correct_hnr_array(arr):
     corrected_arr = []
@@ -57,6 +105,7 @@ def old_v1correct_hnr_array(arr):
             corrected_arr.append(item)
     return corrected_arr
 
+
 def correct_hnr_array(arr):
     if arr is None:
         return []
@@ -75,6 +124,7 @@ def correct_hnr_array(arr):
 def calculate_center_point(geometry):
     line = LineString(geometry)
     return line.centroid
+
 
 def parse_hnr_tags(df: pd.DataFrame) -> pd.DataFrame:
     """Parses the OSM tags to extract house number range info from way
@@ -135,6 +185,7 @@ def parse_hnr_tags(df: pd.DataFrame) -> pd.DataFrame:
 
     return df_copy.drop(columns=["tags_list"])
 
+
 def get_numeric_house_number_column(x: pd.Series) -> typing.List[str]:
     """Extracts the numeric component of a house number
 
@@ -145,6 +196,7 @@ def get_numeric_house_number_column(x: pd.Series) -> typing.List[str]:
     """
     numeric_component = x.str.extract("(\d+)[^\d]*(\d+)?", expand=False).fillna("")
     return [" ".join(j).strip() for j in numeric_component.values.tolist()]
+
 
 def preprocess_hnr_hsn(hnr_df: pd.DataFrame) -> pd.DataFrame:
     """Preprocesses the house numbers for a set of address ranges
@@ -168,6 +220,7 @@ def preprocess_hnr_hsn(hnr_df: pd.DataFrame) -> pd.DataFrame:
     )
 
     return country_hnr_df_lookup
+
 
 def compute_alphabetic_hnr(x: pd.Series) -> typing.List[str]:
     """Generates a list of alphabetic address range in the Orbis ecosystem
@@ -199,6 +252,7 @@ def compute_alphabetic_hnr(x: pd.Series) -> typing.List[str]:
     hnr_array = [x["min_hsn_numeric"] + char for char in variable_part]
 
     return hnr_array
+
 
 def numeric_mixed_array(x: pd.Series) -> typing.List[str]:
     """Parses numeric mixed array according to different posibilities
@@ -235,6 +289,7 @@ def numeric_mixed_array(x: pd.Series) -> typing.List[str]:
 
     return hnr_mixed_array
 
+
 def get_alphabetic_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     """Produces the housenumber array for an alphabetic address range
 
@@ -252,16 +307,16 @@ def get_alphabetic_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     # Compute alphabetic hnr
     country_alpha_hnr_df["first_char"] = (
         country_alpha_hnr_df["min_hsn"]
-        .str.replace("[^a-zA-Z]", "", regex=True)
-        .str[0]
-        .replace({"": "a"})
+            .str.replace("[^a-zA-Z]", "", regex=True)
+            .str[0]
+            .replace({"": "a"})
     )
 
     country_alpha_hnr_df["last_char"] = (
         country_alpha_hnr_df["max_hsn"]
-        .str.replace("[^a-zA-Z]", "", regex=True)
-        .str[0]
-        .replace({"": "a"})
+            .str.replace("[^a-zA-Z]", "", regex=True)
+            .str[0]
+            .replace({"": "a"})
     )
 
     country_alpha_hnr_df["hnr_array"] = country_alpha_hnr_df.apply(
@@ -288,14 +343,14 @@ def get_numeric_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
 
     country_hnr_df_lookup["min_hsn_numeric"] = (
         country_hnr_df_lookup["min_hsn_numeric"]
-        .apply(lambda x: min(x.split(" ")))
-        .astype(int)
+            .apply(lambda x: min(x.split(" ")))
+            .astype(int)
     )
 
     country_hnr_df_lookup["max_hsn_numeric"] = (
         country_hnr_df_lookup["max_hsn_numeric"]
-        .apply(lambda x: max(x.split(" ")))
-        .astype(int)
+            .apply(lambda x: max(x.split(" ")))
+            .astype(int)
     )
 
     # Recompute lowest and max depending on how the info was captured
@@ -377,6 +432,7 @@ def get_numeric_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
 
     return country_hnr_df_lookup
 
+
 def get_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     """Produces the housenumber array, first separating into alphabetic and
     numeric interpolation, and then concat them to produce the address range
@@ -392,11 +448,11 @@ def get_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     # Split into alphabetic and numeric HNR and compute array
     country_alpha_hnr_df = country_hnr_df_lookup.loc[
         country_hnr_df_lookup["interpolation"] == "alphabetic"
-    ].reset_index(drop=True)
+        ].reset_index(drop=True)
 
     country_numeric_hnr_df = country_hnr_df_lookup.loc[
         country_hnr_df_lookup["interpolation"] != "alphabetic"
-    ].reset_index(drop=True)
+        ].reset_index(drop=True)
 
     country_alpha_hnr_df = get_alphabetic_hnr_df(country_alpha_hnr_df)
     country_numeric_hnr_df = get_numeric_hnr_df(country_numeric_hnr_df)
@@ -407,7 +463,6 @@ def get_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     )
 
     return country_hnr_df_lookup
-
 
 
 def find_openmap_schema(
@@ -503,6 +558,29 @@ def ovAdminAreaOrder8Area(schema):
     # Convert the WKB coordinates to Shapely geometries
     # AdminOrdr8Area['geometry'] = AdminOrdr8Area['way'].apply(wkb.loads)
     return AdminOrdr8Area
+
+
+def distanceCalculatioByGroup(input_df: pd.DataFrame) -> pd.DataFrame:
+    global _, row
+    # Calculate the distance between points within each group
+    distances = []
+    current_group = None
+    for _, row in input_df.iterrows():
+        if row['group_id'] != current_group:
+            current_group = row['group_id']
+            prev_point = row['PointLocation']
+            distances.append(0)  # Assign a default distance of 0 for the first point in each group
+        else:
+            curr_point = row['PointLocation']
+            prev_coords = prev_point.coords[0]
+            curr_coords = curr_point.coords[0]
+            distance = haversine_distance(prev_coords[1], prev_coords[0], curr_coords[1], curr_coords[0])
+            distances.append(distance)
+            prev_point = curr_point
+    # Assign the calculated distances to a new column
+    input_df['distance'] = distances
+
+    return input_df
 
 
 query_coordinates = ovAdminAreaOrder8Area(schemaname).head(1).geometry.values[0]
@@ -688,7 +766,6 @@ preprocess_hnr_hsn_df = preprocess_hnr_hsn(parse_hnr_tags_df)
 
 get_hnr_df_DF = get_hnr_df(preprocess_hnr_hsn_df)
 
-
 # Apply the correction function to the "hnr_array" column
 get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
 
@@ -701,7 +778,8 @@ get_hnr_df_DF['intermediates'] = get_hnr_df_DF['intermediates'].apply(correct_hn
 
 
 # Apply the function to the 'way' column and save the result in 'PointLocation' column
-get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
+get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(
+    Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
 
 # Iterate over each row in the DataFrame
 for index, row in get_hnr_df_DF.iterrows():
@@ -727,8 +805,9 @@ get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
 # Remove square brackets and convert array to string using lambda function
 get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0])
 
-
-selectedColumnsGetHnr_DF = get_hnr_df_DF[['osm_id','place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array','PointLocation']]
+selectedColumnsGetHnr_DF = get_hnr_df_DF[
+    ['osm_id', 'place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array',
+     'PointLocation']]
 
 # Explode functionality for Array
 df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
@@ -736,36 +815,34 @@ df_exploded['hnr_Number'] = df_exploded['hnr_array']
 
 df_exploded.reset_index(drop=True, inplace=True)
 
-
 # First output  Starting and Ending point Same
 houseNumberArray = StartAndEndHNRSame(df_exploded)
 
 # Array Issue
 # houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
-#
+
 print("Array Done")
 
 ###########################House Number Duplicate#############################
 
 # Select the columns of interest
-columns_to_check = ['hnr_Number','street','place_name']
+columns_to_check = ['hnr_Number', 'street', 'place_name']
 # Check for duplicate records based on the selected columns
-duplicates = df_exploded.duplicated(subset=columns_to_check,keep=False)
+duplicates = df_exploded.duplicated(subset=columns_to_check, keep=False)
 
 # Filter the DataFrame to select only the duplicate records
 duplicate_records = df_exploded[duplicates]
 
 # Assign a unique ID to each duplicate group
-duplicate_records['group_id'] = duplicate_records.groupby(['hnr_Number','street','place_name']).ngroup()
-
+duplicate_records['group_id'] = duplicate_records.groupby(['hnr_Number', 'street', 'place_name']).ngroup()
 
 # Sort the DataFrame based on 'hnr_Number', 'street', and 'place_name' columns
 sorted_duplicates = duplicate_records.sort_values(by=['hnr_Number', 'street', 'place_name'])
 
 # Reorder the columns
-reordered_columns = ['osm_id','hnr_Number', 'street', 'place_name', 'group_id','min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array','PointLocation','way']
+reordered_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id', 'min_hsn', 'max_hsn', 'hnr_array',
+                     'hnr_numeric_mixed_array', 'PointLocation', 'way']
 sorted_df = sorted_duplicates[reordered_columns]
-
 
 # Drop multiple columns
 houseNumberRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array']
@@ -781,26 +858,39 @@ hnrAddfiltered_other = pd.DataFrame(columns=hnrAddressSorted.columns)  # DataFra
 for _, group in hnrAddressSorted.groupby('group_id'):
     if len(group) == 2:  # Check if the group has exactly two rows remove Same Duplicate
         hnrAddfiltered_two = hnrAddfiltered_two.append(group)  # Append the group to hnrAddfiltered_two DataFrame
-    else: # else Do nothing
+    else:  # else Do nothing
         hnrAddfiltered_other = hnrAddfiltered_other.append(group)  # Append the group to hnrAddfiltered_other DataFrame
 
-hnrAddfiltered_two = hnrAddfiltered_two.drop_duplicates(subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
+hnrAddfiltered_two = hnrAddfiltered_two.drop_duplicates(
+    subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
 
 frames = [hnrAddfiltered_two, hnrAddfiltered_other]
 # Merge DataFrame
 AddrssRangesDuplicateHNR = pd.concat(frames)
 
-AddrssRangesDuplicateHNR.to_csv(r"E:\\Amol\\9_addressRangesPython\\2.AddrssRangesDuplicateHNR.csv")
+# Convert single ‘group_id’to int dtype.
+AddrssRangesDuplicateHNR['group_id'] = AddrssRangesDuplicateHNR['group_id'].astype('int')
+
+# Convert single ‘group_id’to int dtype.
+AddrssRangesDuplicateHNR['osm_id'] = AddrssRangesDuplicateHNR['osm_id'].astype(np.int64)
+
+# create Rank based on group_id and osm_id
+AddrssRangesDuplicateHNR["rank"] = AddrssRangesDuplicateHNR.groupby("group_id")["osm_id"].rank(method="dense",
+                                                                                               ascending=False).astype(
+    int)
+
+# Assuming AddrssRangesDuplicateHNR is your DataFrame
+sorted_df = AddrssRangesDuplicateHNR.sort_values(by=["group_id", "rank"])
+
+# calculate distance in Meter by each group
+AddressRangesFinal = distanceCalculatioByGroup(sorted_df)
+
+AddressRangesFinal.to_csv(r"E:\\Amol\\9_addressRangesPython\\sorted_df.csv")
 # Display the duplicate records
 # print(sorted_df)
 
 
 print("House Number Ranges  Done")
-
-
-
-
-
 
 # creatting Geomaty for Admin area, Plance name , Address Ranges
 # def PandasToGeopandasGeoemtryExport():
