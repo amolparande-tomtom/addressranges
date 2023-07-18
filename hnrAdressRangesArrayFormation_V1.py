@@ -5,11 +5,48 @@ import psycopg2
 import typing
 from shapely.geometry import LineString, Point
 from math import radians, sin, cos, sqrt, atan2
+from typing import Callable
+from pandas.core.frame import DataFrame
 from shapely import wkb
 import geopandas as gpd
 from shapely.wkt import loads
 from map_content.utils import utils
 
+def interpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> DataFrame:
+    for index, row in get_hnr_df_DF.iterrows():
+        interpolation = row['interpolation']
+        intermediates = row['intermediates']
+        min_hsn_numeric = row['min_hsn_numeric']
+        max_hsn_numeric = row['max_hsn_numeric']
+        hnr_numeric_mixed_array = row['hnr_numeric_mixed_array']
+
+        # Check if 'interpolation' is ['irregular', 'odd', 'numeric_mixed', 'even'] is not null
+        if (interpolation in ['irregular', 'odd', 'numeric_mixed', 'even']) and pd.notnull(intermediates).any():
+            # Create the 'hnr_array' by adding 'min_hsn_numeric' and 'max_hsn_numeric' to 'intermediates'
+            hnr_array = [min_hsn_numeric, max_hsn_numeric] + intermediates
+            get_hnr_df_DF.at[index, 'hnr_array'] = hnr_array
+        else:
+            # Copy the records from the existing 'hnr_numeric_mixed_array' column
+            get_hnr_df_DF.at[index, 'hnr_array'] = hnr_numeric_mixed_array
+
+    get_hnr_df_DF['hnr_ranges'] = get_hnr_df_DF['hnr_array']
+
+    # Apply the correction function to the "hnr_array" column
+    get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
+
+    # Remove square brackets and convert array to string using lambda function
+    get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0])
+
+    selectedColumnsGetHnr_DF = get_hnr_df_DF[
+        ['osm_id', 'place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_ranges',
+         'hnr_numeric_mixed_array', 'PointLocation']]
+
+    # Explode functionality for Array
+    df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
+    df_exploded['hnr_Number'] = df_exploded['hnr_array']
+
+    df_exploded.reset_index(drop=True, inplace=True)
+    return df_exploded
 
 # from map_content.utils.openmap import get_alphabetic_hnr_df, get_numeric_hnr_df
 def truncate(n: float, decimals: int = 0) -> int:
@@ -583,11 +620,69 @@ def distanceCalculatioByGroup(input_df: pd.DataFrame) -> pd.DataFrame:
     return input_df
 
 
-query_coordinates = ovAdminAreaOrder8Area(schemaname).head(1).geometry.values[0]
+def finalAddressRanges(df_exploded: DataFrame) -> DataFrame:
+    # Select the columns of interest
+    columns_to_check = ['hnr_Number', 'street', 'place_name']
+
+    # Check for duplicate records based on the selected columns
+    duplicates = df_exploded.duplicated(subset=columns_to_check, keep=False)
+
+    # Filter the DataFrame to select only the duplicate records
+    duplicate_records = df_exploded[duplicates]
+
+    # Assign a unique ID to each duplicate group
+    duplicate_records['group_id'] = duplicate_records.groupby(['hnr_Number', 'street', 'place_name']).ngroup()
+
+    # Sort the DataFrame based on 'hnr_Number', 'street', and 'place_name' columns
+    sorted_duplicates = duplicate_records.sort_values(by=['hnr_Number', 'street', 'place_name'])
+
+    # Reorder the columns
+    reordered_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id', 'min_hsn', 'max_hsn',
+                         'hnr_array',
+                         'hnr_ranges', 'hnr_numeric_mixed_array', 'PointLocation', 'way']
+    sorted_df = sorted_duplicates[reordered_columns]
+
+    # Drop multiple columns
+    houseNumberRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array']
+    hnrAddressSorted = sorted_df.drop(houseNumberRemove, axis=1)
+
+    hnrAddfiltered_two = pd.DataFrame(
+        columns=hnrAddressSorted.columns)  # DataFrame for groups with exactly two rows
+    hnrAddfiltered_other = pd.DataFrame(columns=hnrAddressSorted.columns)  # DataFrame for groups with other lengths
+
+    for _, group in hnrAddressSorted.groupby('group_id'):
+        if len(group) == 2:  # Check if the group has exactly two rows remove Same Duplicate
+            hnrAddfiltered_two = hnrAddfiltered_two.append(
+                group)  # Append the group to hnrAddfiltered_two DataFrame
+        else:
+            hnrAddfiltered_other = hnrAddfiltered_other.append(
+                group)  # Append the group to hnrAddfiltered_other DataFrame
+
+    hnrAddfiltered_two = hnrAddfiltered_two.drop_duplicates(
+        subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
+
+    frames = [hnrAddfiltered_two, hnrAddfiltered_other]
+    # Merge DataFrame
+    AddrssRangesDuplicateHNR = pd.concat(frames)
+
+    # Convert single 'group_id' to int dtype.
+    AddrssRangesDuplicateHNR['group_id'] = AddrssRangesDuplicateHNR['group_id'].astype('int')
+
+    # Convert single 'osm_id' to int dtype.
+    AddrssRangesDuplicateHNR['osm_id'] = AddrssRangesDuplicateHNR['osm_id'].astype(np.int64)
+
+    # Create rank based on group_id and osm_id
+    AddrssRangesDuplicateHNR["rank"] = AddrssRangesDuplicateHNR.groupby("group_id")["osm_id"].rank(method="dense",
+                                                                                                   ascending=False).astype(
+        int)
+
+    # Assuming AddrssRangesDuplicateHNR is your DataFrame
+    sorted_df = AddrssRangesDuplicateHNR.sort_values(by=["group_id", "rank"])
+    return sorted_df
+
 
 # Create a GeoPandas DataFrame
 # spatial_query_result = gpd.GeoDataFrame(AdminOrdr8Area, geometry='geometry')
-
 
 # Create query for addresses to reverse lookup
 
@@ -640,7 +735,6 @@ left join lateral (
                 where name is not null
                 and highway  in ('motorway','motorway_link','trunk','trunk_link','primary','primary_link','secondary','secondary_link','tertiary','tertiary_link','unclassified','residential','service','living_street','road','steps', 'footway', 'path', 'pedestrian', 'bridleway', 'cycleway', 'track')
                 ORDER BY road.way <-> sample.coordinates
-
                 LIMIT 1
                 ) AS road 
  on true
@@ -753,11 +847,16 @@ where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30'
 
 """
 
+# Get Geometry From Admin area
+query_coordinates = ovAdminAreaOrder8Area(schemaname).head(1).geometry.values[0]
+
+# Replace "schema_name" in SQL
 adminAreaAa8 = query.replace("{schema_name}", str(schemaname))
 
+# Replace Polygon "Geometry" in SQL
 addresRanges = adminAreaAa8.replace('{query_coordinates}', query_coordinates)
 
-# pandas DataFrame
+# Hit to Postgres Database nad created pandas DataFrame
 AdminOrdr8Area = pd.read_sql(addresRanges, postgres_db_connection())
 
 parse_hnr_tags_df = parse_hnr_tags(AdminOrdr8Area)
@@ -778,123 +877,82 @@ get_hnr_df_DF['intermediates'] = get_hnr_df_DF['intermediates'].apply(correct_hn
 get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(
     Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
 
-# AllAddrssRanges Records
+# Check if 'interpolation' is ['irregular', 'odd', 'numeric_mixed', 'even'] is not null
 
-# Drop multiple columns
-# Remove multiple columns
-xx = ['place_way', 'way','coordinates']
-AllAddrssRangesRecords = get_hnr_df_DF.drop(xx, axis=1)
+df_exploded = interpolationTypeHandalling(get_hnr_df_DF,correct_hnr_array)
 
-# AllAddrssRangesRecords.to_csv(r"E:\\Amol\\9_addressRangesPython\\AllAddrssRangesRecords.csv")
-
-# Iterate over each row in the DataFrame
-for index, row in get_hnr_df_DF.iterrows():
-    interpolation = row['interpolation']
-    intermediates = row['intermediates']
-    min_hsn_numeric = row['min_hsn_numeric']
-    max_hsn_numeric = row['max_hsn_numeric']
-    hnr_numeric_mixed_array = row['hnr_numeric_mixed_array']
-
-    # Check if 'nterpolation' is 'irregular' and 'intermediates' is not null
-    # if interpolation == 'irregular' and intermediates is not None and pd.notnull(intermediates).any():
-    if (interpolation in ['irregular', 'odd', 'numeric_mixed', 'even']) and pd.notnull(intermediates).any():
-        # Create the 'hnr_array' by adding 'min_hsn_numeric' and 'max_hsn_numeric' to 'intermediates'
-        hnr_array = [min_hsn_numeric, max_hsn_numeric] + intermediates
-        get_hnr_df_DF.at[index, 'hnr_array'] = hnr_array
-    else:
-        # Copy the records from the existing 'hnr_numeric_mixed_array' column
-        get_hnr_df_DF.at[index, 'hnr_array'] = hnr_numeric_mixed_array
-
-get_hnr_df_DF['hnr_ranges'] = get_hnr_df_DF['hnr_array']
-# Apply the correction function to the "hnr_array" column
-get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
-
-# Remove square brackets and convert array to string using lambda function
-get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0])
-
-selectedColumnsGetHnr_DF = get_hnr_df_DF[
-    ['osm_id', 'place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array','hnr_ranges','hnr_numeric_mixed_array',
-     'PointLocation']]
-
-# Explode functionality for Array
-df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
-df_exploded['hnr_Number'] = df_exploded['hnr_array']
-
-df_exploded.reset_index(drop=True, inplace=True)
-
-# "exploded" all records
-
-# Remove multiple columns
-
-
-# First output  Starting and Ending point Same
 houseNumberArray = StartAndEndHNRSame(df_exploded)
 
-# Array Issue
+#################################Array Issue###########################################
+
+
 # houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
 
 print("Array Done")
 
 ###########################House Number Duplicate#############################
 
-# Select the columns of interest
-columns_to_check = ['hnr_Number', 'street', 'place_name']
-# Check for duplicate records based on the selected columns
-duplicates = df_exploded.duplicated(subset=columns_to_check, keep=False)
+# Remaning Processing
 
-# Filter the DataFrame to select only the duplicate records
-duplicate_records = df_exploded[duplicates]
-
-# Assign a unique ID to each duplicate group
-duplicate_records['group_id'] = duplicate_records.groupby(['hnr_Number', 'street', 'place_name']).ngroup()
-
-# Sort the DataFrame based on 'hnr_Number', 'street', and 'place_name' columns
-sorted_duplicates = duplicate_records.sort_values(by=['hnr_Number', 'street', 'place_name'])
-
-# Reorder the columns
-reordered_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id', 'min_hsn', 'max_hsn', 'hnr_array','hnr_ranges',
-                     'hnr_numeric_mixed_array', 'PointLocation', 'way']
-sorted_df = sorted_duplicates[reordered_columns]
-
-# sorted_df.to_csv(r"E:\\Amol\\9_addressRangesPython\\sorted_df.csv")
-
-# Drop multiple columns
-houseNumberRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array','hnr_numeric_mixed_array']
-hnrAddressSorted = sorted_df.drop(houseNumberRemove, axis=1)
-
-# Filter the DataFrame based on group_id count and remove duplicates
-# if 'group_id' has only two records and both are duplicate remove those
-# hnrAddfiltered = hnrAddressSorted.groupby('group_id').filter(lambda x: len(x) == 2).drop_duplicates(subset=['osm_id', 'hnr_Number', 'street', 'place_name','group_id'], keep=False)
-
-hnrAddfiltered_two = pd.DataFrame(columns=hnrAddressSorted.columns)  # DataFrame for groups with exactly two rows
-hnrAddfiltered_other = pd.DataFrame(columns=hnrAddressSorted.columns)  # DataFrame for groups with other lengths
-
-for _, group in hnrAddressSorted.groupby('group_id'):
-    if len(group) == 2:  # Check if the group has exactly two rows remove Same Duplicate
-        hnrAddfiltered_two = hnrAddfiltered_two.append(group)  # Append the group to hnrAddfiltered_two DataFrame
-    else:  # else Do nothing
-        hnrAddfiltered_other = hnrAddfiltered_other.append(group)  # Append the group to hnrAddfiltered_other DataFrame
-
-hnrAddfiltered_two = hnrAddfiltered_two.drop_duplicates(
-    subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
-
-frames = [hnrAddfiltered_two, hnrAddfiltered_other]
-# Merge DataFrame
-AddrssRangesDuplicateHNR = pd.concat(frames)
-
-# Convert single ‘group_id’to int dtype.
-AddrssRangesDuplicateHNR['group_id'] = AddrssRangesDuplicateHNR['group_id'].astype('int')
-
-# Convert single ‘group_id’to int dtype.
-AddrssRangesDuplicateHNR['osm_id'] = AddrssRangesDuplicateHNR['osm_id'].astype(np.int64)
-
-# create Rank based on group_id and osm_id
-AddrssRangesDuplicateHNR["rank"] = AddrssRangesDuplicateHNR.groupby("group_id")["osm_id"].rank(method="dense",
-                                                                                               ascending=False).astype(int)
-
-# Assuming AddrssRangesDuplicateHNR is your DataFrame
-sorted_df = AddrssRangesDuplicateHNR.sort_values(by=["group_id", "rank"])
-
+# # Select the columns of interest
+# columns_to_check = ['hnr_Number', 'street', 'place_name']
+# # Check for duplicate records based on the selected columns
+# duplicates = df_exploded.duplicated(subset=columns_to_check, keep=False)
+#
+# # Filter the DataFrame to select only the duplicate records
+# duplicate_records = df_exploded[duplicates]
+#
+# # Assign a unique ID to each duplicate group
+# duplicate_records['group_id'] = duplicate_records.groupby(['hnr_Number', 'street', 'place_name']).ngroup()
+#
+# # Sort the DataFrame based on 'hnr_Number', 'street', and 'place_name' columns
+# sorted_duplicates = duplicate_records.sort_values(by=['hnr_Number', 'street', 'place_name'])
+#
+# # Reorder the columns
+# reordered_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id', 'min_hsn', 'max_hsn', 'hnr_array','hnr_ranges',
+#                      'hnr_numeric_mixed_array', 'PointLocation', 'way']
+# sorted_df = sorted_duplicates[reordered_columns]
+#
+# # sorted_df.to_csv(r"E:\\Amol\\9_addressRangesPython\\sorted_df.csv")
+#
+# # Drop multiple columns
+# houseNumberRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array','hnr_numeric_mixed_array']
+# hnrAddressSorted = sorted_df.drop(houseNumberRemove, axis=1)
+#
+# # Filter the DataFrame based on group_id count and remove duplicates
+# # if 'group_id' has only two records and both are duplicate remove those
+# # hnrAddfiltered = hnrAddressSorted.groupby('group_id').filter(lambda x: len(x) == 2).drop_duplicates(subset=['osm_id', 'hnr_Number', 'street', 'place_name','group_id'], keep=False)
+#
+# hnrAddfiltered_two = pd.DataFrame(columns=hnrAddressSorted.columns)  # DataFrame for groups with exactly two rows
+# hnrAddfiltered_other = pd.DataFrame(columns=hnrAddressSorted.columns)  # DataFrame for groups with other lengths
+#
+# for _, group in hnrAddressSorted.groupby('group_id'):
+#     if len(group) == 2:  # Check if the group has exactly two rows remove Same Duplicate
+#         hnrAddfiltered_two = hnrAddfiltered_two.append(group)  # Append the group to hnrAddfiltered_two DataFrame
+#     else:  # else Do nothing
+#         hnrAddfiltered_other = hnrAddfiltered_other.append(group)  # Append the group to hnrAddfiltered_other DataFrame
+#
+# hnrAddfiltered_two = hnrAddfiltered_two.drop_duplicates(
+#     subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
+#
+# frames = [hnrAddfiltered_two, hnrAddfiltered_other]
+# # Merge DataFrame
+# AddrssRangesDuplicateHNR = pd.concat(frames)
+#
+# # Convert single ‘group_id’to int dtype.
+# AddrssRangesDuplicateHNR['group_id'] = AddrssRangesDuplicateHNR['group_id'].astype('int')
+#
+# # Convert single ‘group_id’to int dtype.
+# AddrssRangesDuplicateHNR['osm_id'] = AddrssRangesDuplicateHNR['osm_id'].astype(np.int64)
+#
+# # create Rank based on group_id and osm_id
+# AddrssRangesDuplicateHNR["rank"] = AddrssRangesDuplicateHNR.groupby("group_id")["osm_id"].rank(method="dense",
+#                                                                                                ascending=False).astype(int)
+#
+# # Assuming AddrssRangesDuplicateHNR is your DataFrame
+# sorted_df = AddrssRangesDuplicateHNR.sort_values(by=["group_id", "rank"])
+# final Address Ranges Process
+sorted_df=finalAddressRanges(df_exploded)
 # calculate distance in Meter by each group
 AddressRangesFinal = distanceCalculatioByGroup(sorted_df)
 
