@@ -774,12 +774,18 @@ get_hnr_df_DF['intermediates'] = get_hnr_df_DF['intermediates'].apply(correct_hn
 
 #### intermediates,nterpolation == irregular ######
 
-# get_hnr_df_DF['hnr_array'] = get_hnr_df_DF.apply(lambda row: row['intermediates'] + [str(row['min_hsn_numeric']), str(row['max_hsn_numeric'])] if row['interpolation'] == 'irregular' and row['intermediates'] is not None else row['hnr_numeric_mixed_array'], axis=1)
-
-
 # Apply the function to the 'way' column and save the result in 'PointLocation' column
 get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(
     Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
+
+# AllAddrssRanges Records
+
+# Drop multiple columns
+# Remove multiple columns
+xx = ['place_way', 'way','coordinates']
+AllAddrssRangesRecords = get_hnr_df_DF.drop(xx, axis=1)
+
+# AllAddrssRangesRecords.to_csv(r"E:\\Amol\\9_addressRangesPython\\AllAddrssRangesRecords.csv")
 
 # Iterate over each row in the DataFrame
 for index, row in get_hnr_df_DF.iterrows():
@@ -799,6 +805,7 @@ for index, row in get_hnr_df_DF.iterrows():
         # Copy the records from the existing 'hnr_numeric_mixed_array' column
         get_hnr_df_DF.at[index, 'hnr_array'] = hnr_numeric_mixed_array
 
+get_hnr_df_DF['hnr_ranges'] = get_hnr_df_DF['hnr_array']
 # Apply the correction function to the "hnr_array" column
 get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
 
@@ -806,7 +813,7 @@ get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
 get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0])
 
 selectedColumnsGetHnr_DF = get_hnr_df_DF[
-    ['osm_id', 'place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array',
+    ['osm_id', 'place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array','hnr_ranges','hnr_numeric_mixed_array',
      'PointLocation']]
 
 # Explode functionality for Array
@@ -814,6 +821,11 @@ df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
 df_exploded['hnr_Number'] = df_exploded['hnr_array']
 
 df_exploded.reset_index(drop=True, inplace=True)
+
+# "exploded" all records
+
+# Remove multiple columns
+
 
 # First output  Starting and Ending point Same
 houseNumberArray = StartAndEndHNRSame(df_exploded)
@@ -840,12 +852,14 @@ duplicate_records['group_id'] = duplicate_records.groupby(['hnr_Number', 'street
 sorted_duplicates = duplicate_records.sort_values(by=['hnr_Number', 'street', 'place_name'])
 
 # Reorder the columns
-reordered_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id', 'min_hsn', 'max_hsn', 'hnr_array',
+reordered_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id', 'min_hsn', 'max_hsn', 'hnr_array','hnr_ranges',
                      'hnr_numeric_mixed_array', 'PointLocation', 'way']
 sorted_df = sorted_duplicates[reordered_columns]
 
+# sorted_df.to_csv(r"E:\\Amol\\9_addressRangesPython\\sorted_df.csv")
+
 # Drop multiple columns
-houseNumberRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array']
+houseNumberRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array','hnr_numeric_mixed_array']
 hnrAddressSorted = sorted_df.drop(houseNumberRemove, axis=1)
 
 # Filter the DataFrame based on group_id count and remove duplicates
@@ -876,8 +890,7 @@ AddrssRangesDuplicateHNR['osm_id'] = AddrssRangesDuplicateHNR['osm_id'].astype(n
 
 # create Rank based on group_id and osm_id
 AddrssRangesDuplicateHNR["rank"] = AddrssRangesDuplicateHNR.groupby("group_id")["osm_id"].rank(method="dense",
-                                                                                               ascending=False).astype(
-    int)
+                                                                                               ascending=False).astype(int)
 
 # Assuming AddrssRangesDuplicateHNR is your DataFrame
 sorted_df = AddrssRangesDuplicateHNR.sort_values(by=["group_id", "rank"])
@@ -885,7 +898,7 @@ sorted_df = AddrssRangesDuplicateHNR.sort_values(by=["group_id", "rank"])
 # calculate distance in Meter by each group
 AddressRangesFinal = distanceCalculatioByGroup(sorted_df)
 
-AddressRangesFinal.to_csv(r"E:\\Amol\\9_addressRangesPython\\sorted_df.csv")
+AddressRangesFinal.to_csv(r"E:\\Amol\\9_addressRangesPython\\AddressRangesFinal.csv")
 # Display the duplicate records
 # print(sorted_df)
 
