@@ -39,7 +39,7 @@ def interpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> 
 
     selectedColumnsGetHnr_DF = get_hnr_df_DF[
         ['osm_id', 'place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_ranges',
-         'hnr_numeric_mixed_array', 'PointLocation']]
+         'hnr_numeric_mixed_array', 'PointLocation','interpolation','intermediates']]
 
     # Explode functionality for Array
     df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
@@ -638,12 +638,12 @@ def finalAddressRanges(df_exploded: DataFrame) -> DataFrame:
 
     # Reorder the columns
     reordered_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id', 'min_hsn', 'max_hsn',
-                         'hnr_array',
+                         'hnr_array','interpolation','intermediates',
                          'hnr_ranges', 'hnr_numeric_mixed_array', 'PointLocation', 'way']
     sorted_df = sorted_duplicates[reordered_columns]
 
     # Drop multiple columns
-    houseNumberRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_numeric_mixed_array']
+    houseNumberRemove = ['way', 'hnr_array', 'hnr_numeric_mixed_array']
     hnrAddressSorted = sorted_df.drop(houseNumberRemove, axis=1)
 
     hnrAddfiltered_two = pd.DataFrame(
@@ -885,81 +885,34 @@ houseNumberArray = StartAndEndHNRSame(df_exploded)
 
 #################################Array Issue###########################################
 
-
 # houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
-
 print("Array Done")
-
 ###########################House Number Duplicate#############################
-
 # Remaning Processing
-
-# # Select the columns of interest
-# columns_to_check = ['hnr_Number', 'street', 'place_name']
-# # Check for duplicate records based on the selected columns
-# duplicates = df_exploded.duplicated(subset=columns_to_check, keep=False)
-#
-# # Filter the DataFrame to select only the duplicate records
-# duplicate_records = df_exploded[duplicates]
-#
-# # Assign a unique ID to each duplicate group
-# duplicate_records['group_id'] = duplicate_records.groupby(['hnr_Number', 'street', 'place_name']).ngroup()
-#
-# # Sort the DataFrame based on 'hnr_Number', 'street', and 'place_name' columns
-# sorted_duplicates = duplicate_records.sort_values(by=['hnr_Number', 'street', 'place_name'])
-#
-# # Reorder the columns
-# reordered_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id', 'min_hsn', 'max_hsn', 'hnr_array','hnr_ranges',
-#                      'hnr_numeric_mixed_array', 'PointLocation', 'way']
-# sorted_df = sorted_duplicates[reordered_columns]
-#
-# # sorted_df.to_csv(r"E:\\Amol\\9_addressRangesPython\\sorted_df.csv")
-#
-# # Drop multiple columns
-# houseNumberRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array','hnr_numeric_mixed_array']
-# hnrAddressSorted = sorted_df.drop(houseNumberRemove, axis=1)
-#
-# # Filter the DataFrame based on group_id count and remove duplicates
-# # if 'group_id' has only two records and both are duplicate remove those
-# # hnrAddfiltered = hnrAddressSorted.groupby('group_id').filter(lambda x: len(x) == 2).drop_duplicates(subset=['osm_id', 'hnr_Number', 'street', 'place_name','group_id'], keep=False)
-#
-# hnrAddfiltered_two = pd.DataFrame(columns=hnrAddressSorted.columns)  # DataFrame for groups with exactly two rows
-# hnrAddfiltered_other = pd.DataFrame(columns=hnrAddressSorted.columns)  # DataFrame for groups with other lengths
-#
-# for _, group in hnrAddressSorted.groupby('group_id'):
-#     if len(group) == 2:  # Check if the group has exactly two rows remove Same Duplicate
-#         hnrAddfiltered_two = hnrAddfiltered_two.append(group)  # Append the group to hnrAddfiltered_two DataFrame
-#     else:  # else Do nothing
-#         hnrAddfiltered_other = hnrAddfiltered_other.append(group)  # Append the group to hnrAddfiltered_other DataFrame
-#
-# hnrAddfiltered_two = hnrAddfiltered_two.drop_duplicates(
-#     subset=['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id'], keep=False)
-#
-# frames = [hnrAddfiltered_two, hnrAddfiltered_other]
-# # Merge DataFrame
-# AddrssRangesDuplicateHNR = pd.concat(frames)
-#
-# # Convert single ‘group_id’to int dtype.
-# AddrssRangesDuplicateHNR['group_id'] = AddrssRangesDuplicateHNR['group_id'].astype('int')
-#
-# # Convert single ‘group_id’to int dtype.
-# AddrssRangesDuplicateHNR['osm_id'] = AddrssRangesDuplicateHNR['osm_id'].astype(np.int64)
-#
-# # create Rank based on group_id and osm_id
-# AddrssRangesDuplicateHNR["rank"] = AddrssRangesDuplicateHNR.groupby("group_id")["osm_id"].rank(method="dense",
-#                                                                                                ascending=False).astype(int)
-#
-# # Assuming AddrssRangesDuplicateHNR is your DataFrame
-# sorted_df = AddrssRangesDuplicateHNR.sort_values(by=["group_id", "rank"])
-# final Address Ranges Process
 sorted_df=finalAddressRanges(df_exploded)
 # calculate distance in Meter by each group
 AddressRangesFinal = distanceCalculatioByGroup(sorted_df)
 
-AddressRangesFinal.to_csv(r"E:\\Amol\\9_addressRangesPython\\AddressRangesFinal.csv")
+
+
+# Create a dictionary to map old column names to new column names
+finalColumnNames = {'place_name': 'area_name',
+                    'min_hsn': 'first hsn',
+                    'max_hsn': 'last hsn',
+                    'hnr_Number': 'Dup_hnr_Number'
+                    }
+
+# Rename the columns using the dictionary
+AddressRangesFinaldf = AddressRangesFinal.rename(columns=finalColumnNames)
+
+AddressRangesFinaldf['Country code']='GBR'
+AddressRangesFinaldf['place value']= None
+AddressRangesFinaldf['Index level']='8'
+
+
+AddressRangesFinaldf.to_csv(r"E:\\Amol\\9_addressRangesPython\\AddressRangesFinal.csv")
 # Display the duplicate records
 # print(sorted_df)
-
 
 print("House Number Ranges  Done")
 
