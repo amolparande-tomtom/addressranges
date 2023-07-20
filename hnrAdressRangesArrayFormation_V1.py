@@ -1,3 +1,4 @@
+import os
 import re
 import numpy as np
 import pandas as pd
@@ -11,6 +12,15 @@ from shapely import wkb
 import geopandas as gpd
 from shapely.wkt import loads
 from map_content.utils import utils
+
+
+def csvFileWriter(pandasDataFrame, filename, outputpath):
+    if not os.path.exists(outputpath + filename):
+        pandasDataFrame.to_csv(outputpath + filename, mode='w', index=False, encoding="utf-8")
+
+    else:
+        pandasDataFrame.to_csv(outputpath + filename, mode='a', header=False, index=False, encoding="utf-8")
+
 
 def interpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> DataFrame:
     for index, row in get_hnr_df_DF.iterrows():
@@ -39,7 +49,7 @@ def interpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> 
 
     selectedColumnsGetHnr_DF = get_hnr_df_DF[
         ['osm_id', 'place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_ranges',
-         'hnr_numeric_mixed_array', 'PointLocation','interpolation','intermediates']]
+         'hnr_numeric_mixed_array', 'PointLocation', 'interpolation', 'intermediates', 'place_value']]
 
     # Explode functionality for Array
     df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
@@ -47,6 +57,7 @@ def interpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> 
 
     df_exploded.reset_index(drop=True, inplace=True)
     return df_exploded
+
 
 # from map_content.utils.openmap import get_alphabetic_hnr_df, get_numeric_hnr_df
 def truncate(n: float, decimals: int = 0) -> int:
@@ -113,7 +124,8 @@ def StartAndEndHNRSame(dexploded_Df):
     arrayColumnRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array', 'Error']
     houseNumberArrayRemove = houseNumberError.drop(arrayColumnRemove, axis=1)
     # Array Reorder the columns
-    array_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'hnr_numeric_mixed_array', 'PointLocation']
+    array_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'hnr_numeric_mixed_array', 'PointLocation',
+                     'place_value']
     houseNumberArray = houseNumberArrayRemove[array_columns].copy()
     # Remove duplicates and keep the first occurrence
     houseNumberArray.drop_duplicates(subset=['osm_id'], keep='first', inplace=True)
@@ -638,8 +650,8 @@ def finalAddressRanges(df_exploded: DataFrame) -> DataFrame:
 
     # Reorder the columns
     reordered_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'group_id', 'min_hsn', 'max_hsn',
-                         'hnr_array','interpolation','intermediates',
-                         'hnr_ranges', 'hnr_numeric_mixed_array', 'PointLocation', 'way']
+                         'hnr_array', 'interpolation', 'intermediates',
+                         'hnr_ranges', 'hnr_numeric_mixed_array', 'PointLocation', 'way', 'place_value']
     sorted_df = sorted_duplicates[reordered_columns]
 
     # Drop multiple columns
@@ -839,6 +851,7 @@ plarea.reg_code as reg_code,
 plarea.region as place_region, 
 plarea.cntry_code as place_cntry_code,
 plarea.country as place_country, 
+plarea.place as place_value,
 ST_AsText(plarea.way) as place_way,
 addressrangesfinal.*
 from "{schema_name}".planet_osm_polygon as plarea
@@ -848,73 +861,79 @@ where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30'
 """
 
 # Get Geometry From Admin area
-query_coordinates = ovAdminAreaOrder8Area(schemaname).head(1).geometry.values[0]
 
-# Replace "schema_name" in SQL
-adminAreaAa8 = query.replace("{schema_name}", str(schemaname))
+for i, arow in ovAdminAreaOrder8Area(schemaname).iterrows():
+    adminOrder8areaName = arow['name']
+    query_coordinates = arow['geometry']
 
-# Replace Polygon "Geometry" in SQL
-addresRanges = adminAreaAa8.replace('{query_coordinates}', query_coordinates)
+    # query_coordinates = ovAdminAreaOrder8Area(schemaname).head(1).geometry.values[0]
 
-# Hit to Postgres Database nad created pandas DataFrame
-AdminOrdr8Area = pd.read_sql(addresRanges, postgres_db_connection())
+    # Replace "schema_name" in SQL
+    adminAreaAa8 = query.replace("{schema_name}", str(schemaname))
 
-parse_hnr_tags_df = parse_hnr_tags(AdminOrdr8Area)
+    # Replace Polygon "Geometry" in SQL
+    addresRanges = adminAreaAa8.replace('{query_coordinates}', query_coordinates)
 
-preprocess_hnr_hsn_df = preprocess_hnr_hsn(parse_hnr_tags_df)
+    # Hit to Postgres Database nad created pandas DataFrame
+    AdminOrdr8Area = pd.read_sql(addresRanges, postgres_db_connection())
 
-get_hnr_df_DF = get_hnr_df(preprocess_hnr_hsn_df)
+    parse_hnr_tags_df = parse_hnr_tags(AdminOrdr8Area)
 
-# Apply the correction function to the "hnr_array" column
-get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
+    preprocess_hnr_hsn_df = preprocess_hnr_hsn(parse_hnr_tags_df)
 
-# Apply the correction function to the "intermediates" column
-get_hnr_df_DF['intermediates'] = get_hnr_df_DF['intermediates'].apply(correct_hnr_array)
+    get_hnr_df_DF = get_hnr_df(preprocess_hnr_hsn_df)
 
-#### intermediates,nterpolation == irregular ######
+    # Apply the correction function to the "hnr_array" column
+    get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
 
-# Apply the function to the 'way' column and save the result in 'PointLocation' column
-get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(
-    Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
+    # Apply the correction function to the "intermediates" column
+    get_hnr_df_DF['intermediates'] = get_hnr_df_DF['intermediates'].apply(correct_hnr_array)
 
-# Check if 'interpolation' is ['irregular', 'odd', 'numeric_mixed', 'even'] is not null
+    #### intermediates,nterpolation == irregular ######
 
-df_exploded = interpolationTypeHandalling(get_hnr_df_DF,correct_hnr_array)
+    # Apply the function to the 'way' column and save the result in 'PointLocation' column
+    get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(
+        Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
 
-houseNumberArray = StartAndEndHNRSame(df_exploded)
+    # Check if 'interpolation' is ['irregular', 'odd', 'numeric_mixed', 'even'] is not null
 
-#################################Array Issue###########################################
+    df_exploded = interpolationTypeHandalling(get_hnr_df_DF, correct_hnr_array)
 
-# houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
-print("Array Done")
-###########################House Number Duplicate#############################
-# Remaning Processing
-sorted_df=finalAddressRanges(df_exploded)
-# calculate distance in Meter by each group
-AddressRangesFinal = distanceCalculatioByGroup(sorted_df)
+    houseNumberArray = StartAndEndHNRSame(df_exploded)
 
+    #################################Array Issue###########################################
 
+    # houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
+    print("Array Done")
+    ###########################House Number Duplicate#############################
+    # Remaning Processing
+    sorted_df = finalAddressRanges(df_exploded)
+    # calculate distance in Meter by each group
+    AddressRangesFinal = distanceCalculatioByGroup(sorted_df)
 
-# Create a dictionary to map old column names to new column names
-finalColumnNames = {'place_name': 'area_name',
-                    'min_hsn': 'first hsn',
-                    'max_hsn': 'last hsn',
-                    'hnr_Number': 'Dup_hnr_Number'
-                    }
+    # Create a dictionary to map old column names to new column names
+    finalColumnNames = {'place_name': 'area_name',
+                        'min_hsn': 'first hsn',
+                        'max_hsn': 'last hsn',
+                        'hnr_Number': 'Dup_hnr_Number'
+                        }
 
-# Rename the columns using the dictionary
-AddressRangesFinaldf = AddressRangesFinal.rename(columns=finalColumnNames)
+    # Rename the columns using the dictionary
+    AddressRangesFinaldf = AddressRangesFinal.rename(columns=finalColumnNames)
 
-AddressRangesFinaldf['Country code']='GBR'
-AddressRangesFinaldf['place value']= None
-AddressRangesFinaldf['Index level']='8'
+    AddressRangesFinaldf['Country code'] = 'GBR'
+    AddressRangesFinaldf['Index level'] = '8'
+    AddressRangesFinaldf['AA8Name'] = adminOrder8areaName
+    finalReorder = ['Country code', 'place_value', 'Index level', 'area_name', 'street', 'osm_id'
+        , 'interpolation', 'first hsn', 'last hsn', 'intermediates', 'Dup_hnr_Number', 'hnr_ranges'
+        , 'group_id', 'distance', 'PointLocation', 'rank', 'AA8Name']
+    addressRangesOutPut = AddressRangesFinaldf[finalReorder]
 
+    addressRangesOutPut.to_csv(r"E:\\Amol\\9_addressRangesPython\\AddressRangesFinal.csv")
+    # Display the duplicate records
+    # print(sorted_df)
 
-AddressRangesFinaldf.to_csv(r"E:\\Amol\\9_addressRangesPython\\AddressRangesFinal.csv")
-# Display the duplicate records
-# print(sorted_df)
-
-print("House Number Ranges  Done")
+    print("House Number Ranges  Done")
 
 # creatting Geomaty for Admin area, Plance name , Address Ranges
 # def PandasToGeopandasGeoemtryExport():
