@@ -8,6 +8,7 @@ from shapely.geometry import LineString, Point
 from math import radians, sin, cos, sqrt, atan2
 from typing import Callable
 from pandas.core.frame import DataFrame
+import datetime
 from shapely import wkb
 import geopandas as gpd
 from shapely.wkt import loads
@@ -22,7 +23,7 @@ def csvFileWriter(pandasDataFrame, filename, outputpath):
         pandasDataFrame.to_csv(outputpath + filename, mode='a', header=False, index=False, encoding="utf-8")
 
 
-def interpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> DataFrame:
+def oldinterpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> DataFrame:
     for index, row in get_hnr_df_DF.iterrows():
         interpolation = row['interpolation']
         intermediates = row['intermediates']
@@ -45,7 +46,49 @@ def interpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> 
     get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
 
     # Remove square brackets and convert array to string using lambda function
-    get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0])
+    get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0] if isinstance(x, list) else x)
+
+    selectedColumnsGetHnr_DF = get_hnr_df_DF[
+        ['osm_id', 'place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_ranges',
+         'hnr_numeric_mixed_array', 'PointLocation', 'interpolation', 'intermediates', 'place_value']]
+
+    # Explode functionality for Array
+    df_exploded = selectedColumnsGetHnr_DF.explode('hnr_array')
+    df_exploded['hnr_Number'] = df_exploded['hnr_array']
+
+    df_exploded.reset_index(drop=True, inplace=True)
+    return df_exploded
+
+def interpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> DataFrame:
+    # Ensure 'intermediates' column has lists (convert NaNs to empty lists)
+    get_hnr_df_DF['intermediates'] = get_hnr_df_DF['intermediates'].apply(lambda x: x if isinstance(x, list) else [])
+
+    for index, row in get_hnr_df_DF.iterrows():
+        interpolation = row['interpolation']
+        intermediates = row['intermediates']
+        min_hsn_numeric = row['min_hsn_numeric']
+        max_hsn_numeric = row['max_hsn_numeric']
+        hnr_numeric_mixed_array = row['hnr_numeric_mixed_array']
+
+        # Check if 'interpolation' is ['irregular', 'odd', 'numeric_mixed', 'even'] is not null
+        if (interpolation in ['irregular', 'odd', 'numeric_mixed', 'even']) and pd.notnull(intermediates).any():
+            # Create the 'hnr_array' by adding 'min_hsn_numeric' and 'max_hsn_numeric' to 'intermediates'
+            hnr_array = [min_hsn_numeric, max_hsn_numeric] + intermediates
+            get_hnr_df_DF.at[index, 'hnr_array'] = hnr_array
+        else:
+            # Copy the records from the existing 'hnr_numeric_mixed_array' column
+            get_hnr_df_DF.at[index, 'hnr_array'] = hnr_numeric_mixed_array
+
+    get_hnr_df_DF['hnr_ranges'] = get_hnr_df_DF['hnr_array']
+
+    # Ensure 'hnr_array' column has lists (convert NaNs to empty lists)
+    get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(lambda x: x if isinstance(x, list) else [])
+
+    # Apply the correction function to the "hnr_array" column
+    get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
+
+    # Remove square brackets and convert array to string using lambda function
+    get_hnr_df_DF['street'] = get_hnr_df_DF['street'].apply(lambda x: x[0] if isinstance(x, list) else x)
 
     selectedColumnsGetHnr_DF = get_hnr_df_DF[
         ['osm_id', 'place_name', 'street', 'way', 'min_hsn', 'max_hsn', 'hnr_array', 'hnr_ranges',
@@ -122,14 +165,17 @@ def StartAndEndHNRSame(dexploded_Df):
     # houseNumberError.reset_index(drop=True, inplace=True)
     # Remove multiple columns
     arrayColumnRemove = ['way', 'min_hsn', 'max_hsn', 'hnr_array', 'Error']
-    houseNumberArrayRemove = houseNumberError.drop(arrayColumnRemove, axis=1)
-    # Array Reorder the columns
-    array_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'hnr_numeric_mixed_array', 'PointLocation',
-                     'place_value']
-    houseNumberArray = houseNumberArrayRemove[array_columns].copy()
-    # Remove duplicates and keep the first occurrence
-    houseNumberArray.drop_duplicates(subset=['osm_id'], keep='first', inplace=True)
-    return houseNumberArray
+    if houseNumberError.empty:
+        return pd.DataFrame()
+    else:
+        houseNumberArrayRemove = houseNumberError.drop(arrayColumnRemove, axis=1)
+        # Array Reorder the columns
+        array_columns = ['osm_id', 'hnr_Number', 'street', 'place_name', 'hnr_numeric_mixed_array', 'PointLocation',
+                         'place_value']
+        houseNumberArray = houseNumberArrayRemove[array_columns].copy()
+        # Remove duplicates and keep the first occurrence
+        houseNumberArray.drop_duplicates(subset=['osm_id'], keep='first', inplace=True)
+        return houseNumberArray
 
 
 # Function to correct the "hnr_array" column
@@ -155,8 +201,8 @@ def old_v1correct_hnr_array(arr):
     return corrected_arr
 
 
-def correct_hnr_array(arr):
-    if arr is None:
+def old_v2correct_hnr_array(arr):
+    if arr is None or isinstance(arr, float):  # Check for None or float
         return []
     corrected_arr = []
     for item in arr:
@@ -167,6 +213,43 @@ def correct_hnr_array(arr):
         else:
             corrected_arr.append(item)
     return corrected_arr
+
+
+def oldcorrect_hnr_array(arr):
+    if pd.isna(arr):  # Check for NaN ('NAType')
+        return []
+
+    if isinstance(arr, float):  # Check for None or float
+        return []
+
+    corrected_arr = []
+    for item in arr:
+        if isinstance(item, int):
+            corrected_arr.append(item)
+        elif pd.notna(item):  # Check for non-NaN items
+            if ';' in item:
+                corrected_arr.extend(item.split(';'))
+            else:
+                corrected_arr.append(item)
+    return corrected_arr
+
+def correct_hnr_array(arr):
+    if isinstance(arr, float):  # Check for None or float
+        return []
+
+    if isinstance(arr, (list, np.ndarray)):
+        corrected_arr = []
+        for item in arr:
+            if pd.notna(item):  # Check for non-NaN items
+                if isinstance(item, int):
+                    corrected_arr.append(item)
+                elif isinstance(item, str) and ';' in item:
+                    corrected_arr.extend(item.split(';'))
+                else:
+                    corrected_arr.append(item)
+        return corrected_arr
+
+    return []
 
 
 # Function to calculate the center point of a LineString
@@ -375,7 +458,7 @@ def get_alphabetic_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     return country_alpha_hnr_df
 
 
-def get_numeric_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
+def old_get_numeric_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     """Produces the housenumber array for a numeric address range. These are
     address ranges with variance: 'even', 'odd', 'numeric_mixed', 'irregular'
 
@@ -481,6 +564,114 @@ def get_numeric_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
 
     return country_hnr_df_lookup
 
+def get_numeric_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
+    """Produces the housenumber array for a numeric address range. These are
+    address ranges with variance: 'even', 'odd', 'numeric_mixed', 'irregular'
+
+    :param hnr_df: DataFrame, result of openmap_hnr_lookup, after preprocessed
+    :type hnr_df: pd.DataFrame
+    :return: DataFrame containing numeric variance housenumber ranges
+    :rtype: pd.DataFrame
+    """
+    country_hnr_df_lookup = hnr_df.copy()
+
+    # Return empty DataFrame with necessary columns if input is empty
+    if country_hnr_df_lookup.shape[0] == 0:
+        return pd.DataFrame(columns=hnr_df.columns.tolist() + ["hnr_array"])
+
+    # Convert numeric columns to integers after handling missing values
+    country_hnr_df_lookup["min_hsn_numeric"] = (
+        country_hnr_df_lookup["min_hsn_numeric"]
+        .apply(lambda x: min(x.split(" ")) if x else np.nan)
+        .astype(float)
+        .astype(pd.Int32Dtype())
+    )
+
+    country_hnr_df_lookup["max_hsn_numeric"] = (
+        country_hnr_df_lookup["max_hsn_numeric"]
+        .apply(lambda x: max(x.split(" ")) if x else np.nan)
+        .astype(float)
+        .astype(pd.Int32Dtype())
+    )
+
+    # Recompute lowest and max depending on how the info was captured
+    country_hnr_df_lookup["min_hsn_hnr"] = country_hnr_df_lookup[
+        ["min_hsn_numeric", "max_hsn_numeric"]
+    ].min(axis=1)
+    country_hnr_df_lookup["max_hsn_hnr"] = country_hnr_df_lookup[
+        ["min_hsn_numeric", "max_hsn_numeric"]
+    ].max(axis=1)
+
+    # Convert to odd number or even number depending on interpolation
+    country_hnr_df_lookup["min_hsn_hnr"] = np.where(
+        country_hnr_df_lookup["interpolation"] == "even",
+        country_hnr_df_lookup["min_hsn_hnr"] // 2 * 2,
+        np.where(
+            country_hnr_df_lookup["interpolation"] == "odd",
+            country_hnr_df_lookup["min_hsn_hnr"] // 2 * 2 + 1,
+            country_hnr_df_lookup["min_hsn_hnr"],
+        ),
+    )
+
+    country_hnr_df_lookup["max_hsn_hnr"] = np.where(
+        country_hnr_df_lookup["interpolation"] == "even",
+        country_hnr_df_lookup["max_hsn_hnr"] // 2 * 2,
+        np.where(
+            country_hnr_df_lookup["interpolation"] == "odd",
+            country_hnr_df_lookup["max_hsn_hnr"] // 2 * 2 + 1,
+            country_hnr_df_lookup["max_hsn_hnr"],
+        ),
+    )
+
+    # Compute cadency and fill null values for constant
+    country_hnr_df_lookup["cadency"] = np.where(
+        ~country_hnr_df_lookup["interpolation"].isin(["even", "odd"]), 1, 2
+    )
+    country_hnr_df_lookup["constant"] = country_hnr_df_lookup["constant"].fillna("")
+
+    # HNR Array for even and odd cases
+    country_hnr_df_lookup["hnr_array"] = country_hnr_df_lookup.apply(
+        lambda x: list(
+            np.arange(x["min_hsn_hnr"], x["max_hsn_hnr"] + x["cadency"], x["cadency"])
+        ),
+        axis=1,
+    )
+    country_hnr_df_lookup["hnr_array"] = country_hnr_df_lookup["hnr_array"].apply(
+        lambda x: [str(j) for j in x]
+    )
+    country_hnr_df_lookup["hnr_array"] = country_hnr_df_lookup.apply(
+        lambda x: x["hnr_array"] + [str(j) for j in x["intermediates"]]
+        if x["intermediates"]
+        else x["hnr_array"],
+        axis=1,
+    )
+
+    # Compute numeric mixed array
+    country_hnr_df_lookup["min_hsn_variable"] = country_hnr_df_lookup.apply(
+        lambda x: x["min_hsn"].replace(x["constant"], ""), axis=1
+    )
+    country_hnr_df_lookup["max_hsn_variable"] = country_hnr_df_lookup.apply(
+        lambda x: x["max_hsn"].replace(x["constant"], ""), axis=1
+    )
+    country_hnr_df_lookup["hnr_numeric_mixed_array"] = country_hnr_df_lookup.apply(
+        lambda x: numeric_mixed_array(x)
+        if x["interpolation"] == "numeric_mixed"
+        else x["hnr_array"],
+        axis=1,
+    )
+
+    # Determine final array depending on the type of interpolation
+    country_hnr_df_lookup["hnr_array"] = np.where(
+        country_hnr_df_lookup["interpolation"] == "numeric_mixed",
+        country_hnr_df_lookup["hnr_numeric_mixed_array"],
+        country_hnr_df_lookup["hnr_array"],
+    )
+
+    country_hnr_df_lookup["hnr_array"] = country_hnr_df_lookup.hnr_array.apply(
+        lambda x: [str(j) for j in x]
+    )
+
+    return country_hnr_df_lookup
 
 def get_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     """Produces the housenumber array, first separating into alphabetic and
@@ -565,14 +756,13 @@ def find_openmap_schema(
         return country_schemas
 
 
-con = psycopg2.connect(
-    host="10.137.173.68",
-    port="5432",
-    database="ggg",
-    user="ggg",
-    password="ok"
-)
-
+# con = psycopg2.connect(
+#     host="10.137.173.68",
+#     port="5432",
+#     database="ggg",
+#     user="ggg",
+#     password="ok"
+# )
 
 def postgres_db_connection():
     """
@@ -862,79 +1052,108 @@ where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30'
 
 # Get Geometry From Admin area
 
-for i, arow in ovAdminAreaOrder8Area(schemaname).iterrows():
-    adminOrder8areaName = arow['name']
-    query_coordinates = arow['geometry']
+if __name__ == '__main__':
+    for i, arow in ovAdminAreaOrder8Area(schemaname).iterrows():
+        print(f"Id Number is: {i}, OSM ID is {arow['osm_id']}: Admin Area: ,{arow['name']}")
 
-    # query_coordinates = ovAdminAreaOrder8Area(schemaname).head(1).geometry.values[0]
+        adminOrder8areaName = arow['name']
+        query_coordinates = arow['geometry']
 
-    # Replace "schema_name" in SQL
-    adminAreaAa8 = query.replace("{schema_name}", str(schemaname))
+        # query_coordinates = ovAdminAreaOrder8Area(schemaname).head(1).geometry.values[0]
 
-    # Replace Polygon "Geometry" in SQL
-    addresRanges = adminAreaAa8.replace('{query_coordinates}', query_coordinates)
+        # Replace "schema_name" in SQL
+        adminAreaAa8 = query.replace("{schema_name}", str(schemaname))
 
-    # Hit to Postgres Database nad created pandas DataFrame
-    AdminOrdr8Area = pd.read_sql(addresRanges, postgres_db_connection())
+        # Replace Polygon "Geometry" in SQL
+        addresRanges = adminAreaAa8.replace('{query_coordinates}', query_coordinates)
 
-    parse_hnr_tags_df = parse_hnr_tags(AdminOrdr8Area)
+        # Hit to Postgres Database nad created pandas DataFrame
+        AdminOrdr8Area = pd.read_sql(addresRanges, postgres_db_connection())
+        if AdminOrdr8Area.empty:
+            print(f"Empty Data Frame : Id Number is: {i}Admin Area: ,{arow['name']}")
+        else:
+            parse_hnr_tags_df = parse_hnr_tags(AdminOrdr8Area)
 
-    preprocess_hnr_hsn_df = preprocess_hnr_hsn(parse_hnr_tags_df)
+            preprocess_hnr_hsn_df = preprocess_hnr_hsn(parse_hnr_tags_df)
 
-    get_hnr_df_DF = get_hnr_df(preprocess_hnr_hsn_df)
+            get_hnr_df_DF = get_hnr_df(preprocess_hnr_hsn_df)
 
-    # Apply the correction function to the "hnr_array" column
-    get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
+            # Apply the correction function to the "hnr_array" column
+            get_hnr_df_DF['hnr_array'] = get_hnr_df_DF['hnr_array'].apply(correct_hnr_array)
 
-    # Apply the correction function to the "intermediates" column
-    get_hnr_df_DF['intermediates'] = get_hnr_df_DF['intermediates'].apply(correct_hnr_array)
+            # Apply the correction function to the "intermediates" column
+            get_hnr_df_DF['intermediates'] = get_hnr_df_DF['intermediates'].apply(correct_hnr_array)
 
-    #### intermediates,nterpolation == irregular ######
+            #### intermediates,nterpolation == irregular ######
 
-    # Apply the function to the 'way' column and save the result in 'PointLocation' column
-    get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(
-        Point(float(coord.split()[0]), float(coord.split()[1])) for coord in x.strip('LINESTRING()').split(',')))
+            # Apply the function to the 'way' column and save the result in 'PointLocation' column
+            get_hnr_df_DF['PointLocation'] = get_hnr_df_DF['way'].apply(lambda x: calculate_center_point(
+                Point(float(coord.split()[0]), float(coord.split()[1])) for coord in
+                x.strip('LINESTRING()').split(',')))
 
-    # Check if 'interpolation' is ['irregular', 'odd', 'numeric_mixed', 'even'] is not null
+            # Check if 'interpolation' is ['irregular', 'odd', 'numeric_mixed', 'even'] is not null
 
-    df_exploded = interpolationTypeHandalling(get_hnr_df_DF, correct_hnr_array)
+            df_exploded = interpolationTypeHandalling(get_hnr_df_DF, correct_hnr_array)
 
-    houseNumberArray = StartAndEndHNRSame(df_exploded)
+            houseNumberArray = StartAndEndHNRSame(df_exploded)
 
-    #################################Array Issue###########################################
+            #############################################################
+            ####################Array Issue#####################
+            #############################################################
+            filenamearray = 'GBR_AddressRanges_array.csv'
+            outputpath = r"E:\\Amol\\9_addressRangesPython\\"
+            filename = 'GBR_AddressRanges_singla_Array.csv'
+            if not houseNumberArray.empty:
+                pass
+            else:
+                csvFileWriter(houseNumberArray, filenamearray, outputpath)
 
-    # houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
-    print("Array Done")
-    ###########################House Number Duplicate#############################
-    # Remaning Processing
-    sorted_df = finalAddressRanges(df_exploded)
-    # calculate distance in Meter by each group
-    AddressRangesFinal = distanceCalculatioByGroup(sorted_df)
+            print("House Number Ranges Done, Admin Area {}".format(adminOrder8areaName))
 
-    # Create a dictionary to map old column names to new column names
-    finalColumnNames = {'place_name': 'area_name',
-                        'min_hsn': 'first hsn',
-                        'max_hsn': 'last hsn',
-                        'hnr_Number': 'Dup_hnr_Number'
-                        }
+            # houseNumberArray.to_csv(r"E:\\Amol\\9_addressRangesPython\\1.ArrayExplodAddrssRanges.csv")
+            print("Array Done")
+            ###########################House Number Duplicate#############################
+            # Remaning Processing
+            sorted_df = finalAddressRanges(df_exploded)
+            # calculate distance in Meter by each group
+            AddressRangesFinal = distanceCalculatioByGroup(sorted_df)
 
-    # Rename the columns using the dictionary
-    AddressRangesFinaldf = AddressRangesFinal.rename(columns=finalColumnNames)
+            # Create a dictionary to map old column names to new column names
+            finalColumnNames = {'place_name': 'area_name',
+                                'min_hsn': 'first hsn',
+                                'max_hsn': 'last hsn',
+                                'hnr_Number': 'Dup_hnr_Number'
+                                }
 
-    AddressRangesFinaldf['Country code'] = 'GBR'
-    AddressRangesFinaldf['Index level'] = '8'
-    AddressRangesFinaldf['AA8Name'] = adminOrder8areaName
-    finalReorder = ['Country code', 'place_value', 'Index level', 'area_name', 'street', 'osm_id'
-        , 'interpolation', 'first hsn', 'last hsn', 'intermediates', 'Dup_hnr_Number', 'hnr_ranges'
-        , 'group_id', 'distance', 'PointLocation', 'rank', 'AA8Name']
-    addressRangesOutPut = AddressRangesFinaldf[finalReorder]
+            # Rename the columns using the dictionary
+            AddressRangesFinaldf = AddressRangesFinal.rename(columns=finalColumnNames)
 
-    addressRangesOutPut.to_csv(r"E:\\Amol\\9_addressRangesPython\\AddressRangesFinal.csv")
-    # Display the duplicate records
-    # print(sorted_df)
+            AddressRangesFinaldf['Country code'] = 'GBR'
+            AddressRangesFinaldf['Index level'] = '8'
+            AddressRangesFinaldf['AA8Name'] = adminOrder8areaName
+            # Reorder Column
+            finalReorder = ['Country code', 'place_value', 'Index level', 'area_name', 'street', 'osm_id'
+                , 'interpolation', 'first hsn', 'last hsn', 'intermediates', 'Dup_hnr_Number', 'hnr_ranges'
+                , 'group_id', 'distance', 'PointLocation', 'rank', 'AA8Name']
 
-    print("House Number Ranges  Done")
+            addressRangesOutPut = AddressRangesFinaldf[finalReorder]
 
+            # addressRangesOutPut.to_csv(r"E:\\Amol\\9_addressRangesPython\\AddressRangesFinal.csv")
+            # Display the duplicate records
+            #############################################################
+            # Get the current time
+            current_time = datetime.datetime.now()
+            # Format the time as a string (optional)
+            formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
+            #############################################################
+            ####################Adress Ranges Output#####################
+            #############################################################
+            outputpath = r"E:\\Amol\\9_addressRangesPython\\"
+            filename = 'GBR_AddressRanges_multiple_duplicate.csv'
+
+
+            csvFileWriter(addressRangesOutPut, filename, outputpath)
+            print(f"House Number Ranges Done, Admin Area: {adminOrder8areaName}, Current time: {formatted_time}")
 # creatting Geomaty for Admin area, Plance name , Address Ranges
 # def PandasToGeopandasGeoemtryExport():
 #     """
