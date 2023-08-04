@@ -9,10 +9,26 @@ from math import radians, sin, cos, sqrt, atan2
 from typing import Callable
 from pandas.core.frame import DataFrame
 import datetime
+
 from shapely import wkb
 import geopandas as gpd
 from shapely.wkt import loads
 from map_content.utils import utils
+
+
+# def write_dataframe_to_azure_blob(dataframe, connection_string, container_name, output_file_name):
+#     # Write the DataFrame to a CSV file
+#     dataframe.to_csv(output_file_name, index=False)
+#
+#     # Upload the CSV file to Azure Blob Storage
+#     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+#     container_client = blob_service_client.get_container_client(container_name)
+#     blob_client = container_client.get_blob_client(output_file_name)
+#
+#     with open(output_file_name, "rb") as data:
+#         blob_client.upload_blob(data)
+#
+#     print(f"DataFrame successfully written to Azure Blob Storage: {output_file_name}")
 
 
 def csvFileWriter(pandasDataFrame, filename, outputpath):
@@ -58,6 +74,7 @@ def oldinterpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) 
 
     df_exploded.reset_index(drop=True, inplace=True)
     return df_exploded
+
 
 def interpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> DataFrame:
     # Ensure 'intermediates' column has lists (convert NaNs to empty lists)
@@ -232,6 +249,7 @@ def oldcorrect_hnr_array(arr):
             else:
                 corrected_arr.append(item)
     return corrected_arr
+
 
 def correct_hnr_array(arr):
     if isinstance(arr, float):  # Check for None or float
@@ -564,6 +582,7 @@ def old_get_numeric_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
 
     return country_hnr_df_lookup
 
+
 def get_numeric_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     """Produces the housenumber array for a numeric address range. These are
     address ranges with variance: 'even', 'odd', 'numeric_mixed', 'irregular'
@@ -582,16 +601,16 @@ def get_numeric_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     # Convert numeric columns to integers after handling missing values
     country_hnr_df_lookup["min_hsn_numeric"] = (
         country_hnr_df_lookup["min_hsn_numeric"]
-        .apply(lambda x: min(x.split(" ")) if x else np.nan)
-        .astype(float)
-        .astype(pd.Int32Dtype())
+            .apply(lambda x: min(x.split(" ")) if x else np.nan)
+            .astype(float)
+            .astype(pd.Int32Dtype())
     )
 
     country_hnr_df_lookup["max_hsn_numeric"] = (
         country_hnr_df_lookup["max_hsn_numeric"]
-        .apply(lambda x: max(x.split(" ")) if x else np.nan)
-        .astype(float)
-        .astype(pd.Int32Dtype())
+            .apply(lambda x: max(x.split(" ")) if x else np.nan)
+            .astype(float)
+            .astype(pd.Int32Dtype())
     )
 
     # Recompute lowest and max depending on how the info was captured
@@ -672,6 +691,7 @@ def get_numeric_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     )
 
     return country_hnr_df_lookup
+
 
 def get_hnr_df(hnr_df: pd.DataFrame) -> pd.DataFrame:
     """Produces the housenumber array, first separating into alphabetic and
@@ -771,7 +791,7 @@ def postgres_db_connection():
     """
     try:
         con = psycopg2.connect(
-            host="10.137.173.70",
+            host="10.137.173.68",
             port="5432",
             database="ggg",
             user="ggg",
@@ -915,8 +935,6 @@ where "addr:housenumber" is not null or tags::text like '%addr:housenumber%'
 
 )
 
-
-
 , hsn_keys as (
 select * from hsn_tags where (keys like '%addr:housenumber%')
 
@@ -964,7 +982,7 @@ join buffers on ST_Intersects(buffers.buffer, hnr.way)
 
 join "{schema_name}".planet_osm_ways ways  on ways.id = hnr.osm_id
 
-where hnr."addr:interpolation" is not null 
+where hnr."addr:interpolation" is not null and hnr.tags-> 'layer_id' = '15633'
 )
 
 ,   hsn as (
@@ -978,13 +996,13 @@ from address_ranges
 left join "{schema_name}".planet_osm_point pop 
 on pop.osm_id = address_ranges.nodes
 
-where pop.tags is not null
+where pop.tags is not null and pop.tags-> 'layer_id' = '15633'
 )
 
 
 ,   hsn_long as (
-select 
-hsn.osm_id
+    select 
+    hsn.osm_id
 ,   hsn.index_searched_query
 ,   hsn.coordinates
 ,   hsn.tags as tags_network
@@ -1046,7 +1064,7 @@ ST_AsText(plarea.way) as place_way,
 addressrangesfinal.*
 from "{schema_name}".planet_osm_polygon as plarea
 INNER JOIN addressrangesfinal ON ST_Intersects(ST_SetSRID(addressrangesfinal.way, 4326), ST_SetSRID(plarea.way, 4326))
-where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30'
+where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30' and addressrangesfinal.interpolation != 'alphabetic'
 
 """
 
@@ -1055,7 +1073,6 @@ where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30'
 if __name__ == '__main__':
     for i, arow in ovAdminAreaOrder8Area(schemaname).iterrows():
         print(f"Id Number is: {i}, OSM ID is {arow['osm_id']}: Admin Area: ,{arow['name']}")
-
         adminOrder8areaName = arow['name']
         query_coordinates = arow['geometry']
 
@@ -1068,7 +1085,15 @@ if __name__ == '__main__':
         addresRanges = adminAreaAa8.replace('{query_coordinates}', query_coordinates)
 
         # Hit to Postgres Database nad created pandas DataFrame
-        AdminOrdr8Area = pd.read_sql(addresRanges, postgres_db_connection())
+        postgresSQl = pd.read_sql(addresRanges, postgres_db_connection())
+
+        # Removing alphanumeric rows from "min_hsn" and 'max_hsn' columns
+        alphanumericRemove = postgresSQl[postgresSQl['min_hsn'].str.isnumeric() & postgresSQl['max_hsn'].str.isnumeric()]
+
+        # Removing special character rows from "min_hsn" and 'max_hsn' columns
+        special_chars = r'[^\w\s]'
+        AdminOrdr8Area = alphanumericRemove[~(alphanumericRemove['min_hsn'].str.contains(special_chars) | alphanumericRemove['max_hsn'].str.contains(special_chars))]
+
         if AdminOrdr8Area.empty:
             print(f"Empty Data Frame : Id Number is: {i}Admin Area: ,{arow['name']}")
         else:
@@ -1104,9 +1129,9 @@ if __name__ == '__main__':
             outputpath = r"E:\\Amol\\9_addressRangesPython\\"
             filename = 'GBR_AddressRanges_singla_Array.csv'
             if not houseNumberArray.empty:
-                pass
-            else:
                 csvFileWriter(houseNumberArray, filenamearray, outputpath)
+            else:
+                pass
 
             print("House Number Ranges Done, Admin Area {}".format(adminOrder8areaName))
 
@@ -1150,9 +1175,16 @@ if __name__ == '__main__':
             #############################################################
             outputpath = r"E:\\Amol\\9_addressRangesPython\\"
             filename = 'GBR_AddressRanges_multiple_duplicate.csv'
-
-
             csvFileWriter(addressRangesOutPut, filename, outputpath)
+
+            ########################## Write to Azure Blobe Storage ##########################
+
+            container_name = 'addressrange'
+            connection_string = 'DefaultEndpointsProtocol=https;AccountName=addressrangesduplicate;AccountKey=p32JpcVTxylnEHoUIX91DUdaaGPE+P3Ipb8zGy8EfDiz01We6y1nl4ypauEQNGWa0rXdxP6SM0Py+ASt4Hbptg==;EndpointSuffix=core.windows.net'
+
+            # write_dataframe_to_azure_blob(addressRangesOutPut, connection_string, container_name, filename)
+
+
             print(f"House Number Ranges Done, Admin Area: {adminOrder8areaName}, Current time: {formatted_time}")
 # creatting Geomaty for Admin area, Plance name , Address Ranges
 # def PandasToGeopandasGeoemtryExport():
