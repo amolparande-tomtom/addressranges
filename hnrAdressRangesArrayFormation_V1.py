@@ -791,7 +791,7 @@ def postgres_db_connection():
     """
     try:
         con = psycopg2.connect(
-            host="10.137.173.68",
+            host="10.137.173.69",
             port="5432",
             database="ggg",
             user="ggg",
@@ -1156,12 +1156,17 @@ if __name__ == '__main__':
             AddressRangesFinaldf['Country code'] = 'GBR'
             AddressRangesFinaldf['Index level'] = '8'
             AddressRangesFinaldf['AA8Name'] = adminOrder8areaName
+
+
             # Reorder Column
             finalReorder = ['Country code', 'place_value', 'Index level', 'area_name', 'street', 'osm_id'
                 , 'interpolation', 'first hsn', 'last hsn', 'intermediates', 'Dup_hnr_Number', 'hnr_ranges'
                 , 'group_id', 'distance', 'PointLocation', 'rank', 'AA8Name']
 
             addressRangesOutPut = AddressRangesFinaldf[finalReorder]
+
+            # Concatenate First_Name and Last_Name columns with a space in between
+            addressRangesOutPut['new_group_id'] = addressRangesOutPut['group_id'].astype(str).str.cat(addressRangesOutPut['AA8Name'], sep='_')
 
             # addressRangesOutPut.to_csv(r"E:\\Amol\\9_addressRangesPython\\AddressRangesFinal.csv")
             # Display the duplicate records
