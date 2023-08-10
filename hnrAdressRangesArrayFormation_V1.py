@@ -9,11 +9,8 @@ from math import radians, sin, cos, sqrt, atan2
 from typing import Callable
 from pandas.core.frame import DataFrame
 import datetime
+from sqlalchemy import create_engine
 
-from shapely import wkb
-import geopandas as gpd
-from shapely.wkt import loads
-from map_content.utils import utils
 
 
 # def write_dataframe_to_azure_blob(dataframe, connection_string, container_name, output_file_name):
@@ -802,13 +799,9 @@ def postgres_db_connection():
         print("Oops! An exception has occured:", error)
         print("Exception TYPE:", type(error))
 
-
-schemaname = find_openmap_schema("gbr").nspname[0]
-
-
 # Query all schemas in Openmap database
 
-def ovAdminAreaOrder8Area(schema):
+def ovAdminAreaOrder8Areaold(schema):
     adminArea = """SELECT osm_id ,admin_level,boundary,"name",place,country, ST_AsText(way) as geometry
     FROM "{schema_name}".planet_osm_polygon 
     where boundary= 'administrative' and admin_level like '8'"""
@@ -817,6 +810,19 @@ def ovAdminAreaOrder8Area(schema):
     # Convert the WKB coordinates to Shapely geometries
     # AdminOrdr8Area['geometry'] = AdminOrdr8Area['way'].apply(wkb.loads)
     return AdminOrdr8Area
+
+def ovAdminAreaOrder8Area(schemaName,engine):
+
+    adminArea = f"""SELECT osm_id ,admin_level,boundary,"name",place,country, ST_AsText(way) as geometry 
+    FROM "{schemaName}".planet_osm_polygon where boundary= 'administrative' and admin_level like '8'"""
+    # adminAreaAa8 = adminArea.replace("{schema_name}", str(schemaName))
+    print(adminArea)
+    # Create a database engine
+
+    # Use pandas to execute the query and retrieve the data
+    AdminOrdr8Area = pd.read_sql_query(adminArea, engine)
+    return AdminOrdr8Area
+
 
 
 def distanceCalculatioByGroup(input_df: pd.DataFrame) -> pd.DataFrame:
@@ -901,6 +907,177 @@ def finalAddressRanges(df_exploded: DataFrame) -> DataFrame:
     # Assuming AddrssRangesDuplicateHNR is your DataFrame
     sorted_df = AddrssRangesDuplicateHNR.sort_values(by=["group_id", "rank"])
     return sorted_df
+
+def sqlAdresRanges(schemaName, query_coordinates, engine):
+    query = f"""
+    with sample as (select index_searched_query
+                            ,st_geomfromtext (coordinates, 4326)  coordinates
+                             from (VALUES (0, '{query_coordinates}')) as t (index_searched_query, coordinates))
+    , tags as (
+    select distinct skeys(tags) keys
+    from "{schemaName}".planet_osm_polygon pop 
+    where admin_level  in ('4', '8')
+    )
+
+
+    , name_tags as (
+    select * 
+    from tags
+    where (keys like '%name:%' or keys like '%alt%name') and keys not like '%pronunciation%'
+    )   
+
+
+    , hsn_tags as (
+    select distinct skeys(tags) keys 
+    from "{schemaName}".planet_osm_point
+    where "addr:housenumber" is not null or tags::text like '%addr:housenumber%'
+
+    )
+
+    , hsn_keys as (
+    select * from hsn_tags where (keys like '%addr:housenumber%')
+
+    )
+    ,buffers as (
+    select 
+        sample.index_searched_query
+    ,   sample.coordinates
+    ,   coordinates as buffer
+    ,   road.road as road_name
+    ,   road.name_tags_array as road_names
+    from sample
+
+
+    left join lateral (
+                    SELECT name as road, array_remove(tags->array((select keys from name_tags)), null) as name_tags_array
+                    FROM "{schemaName}".planet_osm_line road
+                    where name is not null
+                    and highway  in ('motorway','motorway_link','trunk','trunk_link','primary','primary_link','secondary','secondary_link','tertiary','tertiary_link','unclassified','residential','service','living_street','road','steps', 'footway', 'path', 'pedestrian', 'bridleway', 'cycleway', 'track')
+                    ORDER BY road.way <-> sample.coordinates
+                    LIMIT 1
+                    ) AS road 
+     on true
+     )
+
+
+    ,  address_ranges as (
+    select 
+    buffers.index_searched_query
+    ,   buffers.coordinates
+    ,   buffers.road_name
+    ,   buffers.road_names
+    ,   hnr.osm_id
+    ,   ST_astext(hnr.way) way
+    ,   hnr."addr:interpolation" as interpolation
+    ,   hnr.tags
+    ,   hnr.tags->'addr:street' as road_name_way
+    ,   hnr.tags->'addr:interpolation' as interpolation_tag
+    ,   hnr."name" 
+    ,   unnest(ways.nodes) nodes
+
+    from "{schemaName}".planet_osm_line hnr
+
+    join buffers on ST_Intersects(buffers.buffer, hnr.way)
+
+    join "{schemaName}".planet_osm_ways ways  on ways.id = hnr.osm_id
+
+    where hnr."addr:interpolation" is not null and hnr.tags-> 'layer_id' = '15633'
+    )
+
+    ,   hsn as (
+    select 
+    pop.tags as tags_hsn
+    ,   array_remove(array_append(pop.tags -> array((select keys from hsn_keys )), pop."addr:housenumber"), null) as range_hsn
+    , address_ranges.*
+
+    from address_ranges
+
+    left join "{schemaName}".planet_osm_point pop 
+    on pop.osm_id = address_ranges.nodes
+
+    where pop.tags is not null and pop.tags-> 'layer_id' = '15633'
+    )
+
+
+    ,   hsn_long as (
+        select 
+        hsn.osm_id
+    ,   hsn.index_searched_query
+    ,   hsn.coordinates
+    ,   hsn.tags as tags_network
+    ,   hsn.road_name_way
+    ,   hsn.road_name
+    ,   hsn.road_names
+    ,   hsn.interpolation
+    ,   hsn.interpolation_tag
+    ,   hsn.way
+    ,   hsn.name
+    ,   first_value(tags_hsn) over(partition by osm_id) as first_tags_hsn
+    ,   unnest(range_hsn) as range_hsn
+
+    from hsn 
+    )
+    ,addressrangesfinal as (select 
+    	hsn_long.osm_id
+    ,   hsn_long.road_name
+    ,   hsn_long.way
+    ,   min(range_hsn) as min_hsn
+    ,   max(range_hsn) as max_hsn	
+    ,   hsn_long.index_searched_query
+    ,   ST_AsText(hsn_long.coordinates) as coordinates
+    ,   hsn_long.tags_network
+    ,   hsn_long.road_name_way
+    ,   hsn_long.interpolation
+    ,   hsn_long.road_names
+    ,   hsn_long.interpolation_tag
+    ,   hsn_long.name
+    ,   first_tags_hsn as tags
+    ,   array_agg(distinct range_hsn) as intermediates
+    from hsn_long
+    group by 
+    	hsn_long.osm_id
+    ,   hsn_long.index_searched_query
+    ,   coordinates
+    ,   hsn_long.road_name
+    ,   hsn_long.road_names
+    ,   hsn_long.tags_network
+    ,   hsn_long.road_name_way
+    ,   hsn_long.interpolation
+    ,   hsn_long.interpolation_tag
+    ,   hsn_long.way
+    ,   hsn_long.name
+    ,   first_tags_hsn
+    order by hsn_long.osm_id)
+
+    select 
+    plarea.osm_id as place_osm_id ,
+    plarea.name as place_name, 
+    plarea.reg_code as reg_code, 
+    plarea.region as place_region, 
+    plarea.cntry_code as place_cntry_code,
+    plarea.country as place_country, 
+    plarea.place as place_value,
+    --ST_AsText(plarea.way) as place_way,
+    --addressrangesfinal.*
+    addressrangesfinal.osm_id,
+    addressrangesfinal.road_name,
+    addressrangesfinal.min_hsn,
+    addressrangesfinal.max_hsn,
+    addressrangesfinal.tags_network,
+    addressrangesfinal.interpolation,
+    addressrangesfinal.road_names,
+    addressrangesfinal.name,
+    addressrangesfinal.tags,
+    addressrangesfinal.intermediates,
+    addressrangesfinal.way
+    from "{schemaName}".planet_osm_polygon as plarea
+    INNER JOIN addressrangesfinal ON ST_Intersects(ST_SetSRID(addressrangesfinal.way, 4326), ST_SetSRID(plarea.way, 4326))
+    where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30' and addressrangesfinal.interpolation != 'alphabetic'
+
+    """
+    print(query)
+    AdminOrdr8Area = pd.read_sql_query(query, engine)
+    return AdminOrdr8Area
 
 
 # Create a GeoPandas DataFrame
@@ -1060,32 +1237,53 @@ plarea.region as place_region,
 plarea.cntry_code as place_cntry_code,
 plarea.country as place_country, 
 plarea.place as place_value,
-ST_AsText(plarea.way) as place_way,
-addressrangesfinal.*
+--ST_AsText(plarea.way) as place_way,
+--addressrangesfinal.*
+addressrangesfinal.osm_id,
+addressrangesfinal.road_name,
+addressrangesfinal.min_hsn,
+addressrangesfinal.max_hsn,
+addressrangesfinal.tags_network,
+addressrangesfinal.interpolation,
+addressrangesfinal.road_names,
+addressrangesfinal.name,
+addressrangesfinal.tags,
+addressrangesfinal.intermediates,
+addressrangesfinal.way
 from "{schema_name}".planet_osm_polygon as plarea
 INNER JOIN addressrangesfinal ON ST_Intersects(ST_SetSRID(addressrangesfinal.way, 4326), ST_SetSRID(plarea.way, 4326))
 where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30' and addressrangesfinal.interpolation != 'alphabetic'
 
 """
 
-# Get Geometry From Admin area
+outputpath = r"E:\\Amol\\9_addressRangesPython\\"
+filenameArray = 'GBR_AddressRanges_singla_Array.csv'
+multipleFilename = 'GBR_AddressRanges_multiple_duplicate.csv'
+
+# Replace these values with your database connection details
+db_username = "ggg"
+db_password = "ok"
+db_host = "10.137.173.69"
+db_port = "5432"
+db_name = "ggg"
+
+# Construct the database URL
+db_url = f"postgresql://{db_username}:{db_password}@{db_host}:{db_port}/{db_name}"
+
+schemaNamePG = find_openmap_schema("gbr").nspname[0]
 
 if __name__ == '__main__':
-    for i, arow in ovAdminAreaOrder8Area(schemaname).iterrows():
+    # pgConnection = postgres_db_connection()
+    engine = create_engine(db_url)
+
+    for i, arow in ovAdminAreaOrder8Area(schemaNamePG, engine).iterrows():
+        print(f"Started:,{datetime.datetime.now()}")
+        Started = datetime.datetime.now()
         print(f"Id Number is: {i}, OSM ID is {arow['osm_id']}: Admin Area: ,{arow['name']}")
         adminOrder8areaName = arow['name']
         query_coordinates = arow['geometry']
 
-        # query_coordinates = ovAdminAreaOrder8Area(schemaname).head(1).geometry.values[0]
-
-        # Replace "schema_name" in SQL
-        adminAreaAa8 = query.replace("{schema_name}", str(schemaname))
-
-        # Replace Polygon "Geometry" in SQL
-        addresRanges = adminAreaAa8.replace('{query_coordinates}', query_coordinates)
-
-        # Hit to Postgres Database nad created pandas DataFrame
-        postgresSQl = pd.read_sql(addresRanges, postgres_db_connection())
+        postgresSQl = sqlAdresRanges(schemaNamePG, query_coordinates, engine)
 
         # Removing alphanumeric rows from "min_hsn" and 'max_hsn' columns
         alphanumericRemove = postgresSQl[postgresSQl['min_hsn'].str.isnumeric() & postgresSQl['max_hsn'].str.isnumeric()]
@@ -1125,11 +1323,9 @@ if __name__ == '__main__':
             #############################################################
             ####################Array Issue#####################
             #############################################################
-            filenamearray = 'GBR_AddressRanges_array.csv'
-            outputpath = r"E:\\Amol\\9_addressRangesPython\\"
-            filename = 'GBR_AddressRanges_singla_Array.csv'
+
             if not houseNumberArray.empty:
-                csvFileWriter(houseNumberArray, filenamearray, outputpath)
+                csvFileWriter(houseNumberArray, filenameArray, outputpath)
             else:
                 pass
 
@@ -1178,65 +1374,16 @@ if __name__ == '__main__':
             #############################################################
             ####################Adress Ranges Output#####################
             #############################################################
-            outputpath = r"E:\\Amol\\9_addressRangesPython\\"
-            filename = 'GBR_AddressRanges_multiple_duplicate.csv'
-            csvFileWriter(addressRangesOutPut, filename, outputpath)
 
+            csvFileWriter(addressRangesOutPut, multipleFilename, outputpath)
             ########################## Write to Azure Blobe Storage ##########################
 
-            container_name = 'addressrange'
-            connection_string = 'DefaultEndpointsProtocol=https;AccountName=addressrangesduplicate;AccountKey=p32JpcVTxylnEHoUIX91DUdaaGPE+P3Ipb8zGy8EfDiz01We6y1nl4ypauEQNGWa0rXdxP6SM0Py+ASt4Hbptg==;EndpointSuffix=core.windows.net'
+            # container_name = 'addressrange'
+            # connection_string = 'DefaultEndpointsProtocol=https;AccountName=addressrangesduplicate;AccountKey=p32JpcVTxylnEHoUIX91DUdaaGPE+P3Ipb8zGy8EfDiz01We6y1nl4ypauEQNGWa0rXdxP6SM0Py+ASt4Hbptg==;EndpointSuffix=core.windows.net'
 
             # write_dataframe_to_azure_blob(addressRangesOutPut, connection_string, container_name, filename)
+            end = datetime.datetime.now()
 
+            print(f"Id Number is: {i}=========>>>>>, Exicution time:{end - Started}")
 
             print(f"House Number Ranges Done, Admin Area: {adminOrder8areaName}, Current time: {formatted_time}")
-# creatting Geomaty for Admin area, Plance name , Address Ranges
-# def PandasToGeopandasGeoemtryExport():
-#     """
-#     :return: # creatting Geomaty for Admin area, Plance name , Address Ranges
-#     """
-#     # # Create new geometry column from the "way" column
-#     get_hnr_df_DF['geometry'] = get_hnr_df_DF['way'].apply(lambda way: loads(way.split(';')[0]))
-#     #
-#     # # Create a GeoPandas DataFrame
-#     spatial_query_result = gpd.GeoDataFrame(get_hnr_df_DF, geometry='geometry')
-#     # Convert non-compatible columns to string
-#     non_compatible_types = ['object', 'bool']  # Add more types if needed
-#     non_string_columns = spatial_query_result.select_dtypes(
-#         exclude=['string', 'int', 'float', 'datetime', 'geometry']).columns
-#     for column in non_string_columns:
-#         if spatial_query_result[column].dtype.name in non_compatible_types:
-#             spatial_query_result[column] = spatial_query_result[column].astype(str)
-#     # export to line
-#     # Export to GeoPackage Adress Ranges
-#     pathline = r"E:\\Amol\\9_addressRangesPython\\AddrssRangeslineArray.gpkg"
-#     spatial_query_result.to_file(pathline, layer='AddrssRanges', driver='GPKG')
-#     #### create Polygon Geometry Admin order 8 area
-#     AA8gdf = spatial_query_result.copy()
-#     # Remove the existing "coordinates" column
-#     AA8gdf.drop(columns='geometry', inplace=True)
-#     #
-#     AA8gdf_duplicates = AA8gdf.drop_duplicates(subset=['coordinates'])
-#     # Create new geometry column from the "way" column
-#     AA8gdf_duplicates['geometry'] = AA8gdf_duplicates['coordinates'].apply(
-#         lambda coordinates: loads(coordinates.split(';')[0]))
-#     # # Create a GeoPandas DataFrame
-#     admiAreaOrder8AreaGDF = gpd.GeoDataFrame(AA8gdf_duplicates, geometry='geometry')
-#     # # Export to GeoPackage
-#     admiAreaOrder8AreaGDF.to_file(pathline, layer='AdminOrder8Area', driver='GPKG')
-#     #### create Polygon Geometry Placename
-#     placegdf = spatial_query_result.copy()
-#     # Remove the existing "coordinates" column
-#     placegdf.drop(columns='geometry', inplace=True)
-#     #
-#     placegdf_duplicates = placegdf.drop_duplicates(subset=['place_way'])
-#     # Create new geometry column from the "way" column
-#     placegdf_duplicates['geometry'] = placegdf_duplicates['place_way'].apply(
-#         lambda place_way: loads(place_way.split(';')[0]))
-#     # # Create a GeoPandas DataFrame
-#     placeGDF = gpd.GeoDataFrame(placegdf_duplicates, geometry='geometry')
-#     # Export to GeoPackage
-#     placeGDF.to_file(pathline, layer='place', driver='GPKG')
-#
-# PandasToGeopandasGeoemtryExport()
