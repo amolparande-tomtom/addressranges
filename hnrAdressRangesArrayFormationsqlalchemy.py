@@ -61,7 +61,6 @@ def interpolationTypeHandalling(get_hnr_df_DF: DataFrame, correct_hnr_array) -> 
     df_exploded.reset_index(drop=True, inplace=True)
     return df_exploded
 
-
 # from map_content.utils.openmap import get_alphabetic_hnr_df, get_numeric_hnr_df
 def truncate(n: float, decimals: int = 0) -> int:
     """Simple function which truncates an incoming float value (n) and returns its integer value
@@ -674,176 +673,15 @@ def finalAddressRanges(df_exploded: DataFrame) -> DataFrame:
     sorted_df = AddrssRangesDuplicateHNR.sort_values(by=["group_id", "rank"])
     return sorted_df
 
+
 def sqlAdresRanges(schemaName, query_coordinates, engine):
-    query = f"""
-    with sample as (select index_searched_query
-                            ,st_geomfromtext (coordinates, 4326)  coordinates
-                             from (VALUES (0, '{query_coordinates}')) as t (index_searched_query, coordinates))
-    , tags as (
-    select distinct skeys(tags) keys
-    from "{schemaName}".planet_osm_polygon pop 
-    where admin_level  in ('4', '8')
-    )
-
-
-    , name_tags as (
-    select * 
-    from tags
-    where (keys like '%name:%' or keys like '%alt%name') and keys not like '%pronunciation%'
-    )   
-
-
-    , hsn_tags as (
-    select distinct skeys(tags) keys 
-    from "{schemaName}".planet_osm_point
-    where "addr:housenumber" is not null or tags::text like '%addr:housenumber%'
-
-    )
-
-    , hsn_keys as (
-    select * from hsn_tags where (keys like '%addr:housenumber%')
-
-    )
-    ,buffers as (
-    select 
-        sample.index_searched_query
-    ,   sample.coordinates
-    ,   coordinates as buffer
-    ,   road.road as road_name
-    ,   road.name_tags_array as road_names
-    from sample
-
-
-    left join lateral (
-                    SELECT name as road, array_remove(tags->array((select keys from name_tags)), null) as name_tags_array
-                    FROM "{schemaName}".planet_osm_line road
-                    where name is not null
-                    and highway  in ('motorway','motorway_link','trunk','trunk_link','primary','primary_link','secondary','secondary_link','tertiary','tertiary_link','unclassified','residential','service','living_street','road','steps', 'footway', 'path', 'pedestrian', 'bridleway', 'cycleway', 'track')
-                    ORDER BY road.way <-> sample.coordinates
-                    LIMIT 1
-                    ) AS road 
-     on true
-     )
-
-
-    ,  address_ranges as (
-    select 
-    buffers.index_searched_query
-    ,   buffers.coordinates
-    ,   buffers.road_name
-    ,   buffers.road_names
-    ,   hnr.osm_id
-    ,   ST_astext(hnr.way) way
-    ,   hnr."addr:interpolation" as interpolation
-    ,   hnr.tags
-    ,   hnr.tags->'addr:street' as road_name_way
-    ,   hnr.tags->'addr:interpolation' as interpolation_tag
-    ,   hnr."name" 
-    ,   unnest(ways.nodes) nodes
-
-    from "{schemaName}".planet_osm_line hnr
-
-    join buffers on ST_Intersects(buffers.buffer, hnr.way)
-
-    join "{schemaName}".planet_osm_ways ways  on ways.id = hnr.osm_id
-
-    where hnr."addr:interpolation" is not null and hnr.tags-> 'layer_id' = '15633'
-    )
-
-    ,   hsn as (
-    select 
-    pop.tags as tags_hsn
-    ,   array_remove(array_append(pop.tags -> array((select keys from hsn_keys )), pop."addr:housenumber"), null) as range_hsn
-    , address_ranges.*
-
-    from address_ranges
-
-    left join "{schemaName}".planet_osm_point pop 
-    on pop.osm_id = address_ranges.nodes
-
-    where pop.tags is not null and pop.tags-> 'layer_id' = '15633'
-    )
-
-
-    ,   hsn_long as (
-        select 
-        hsn.osm_id
-    ,   hsn.index_searched_query
-    ,   hsn.coordinates
-    ,   hsn.tags as tags_network
-    ,   hsn.road_name_way
-    ,   hsn.road_name
-    ,   hsn.road_names
-    ,   hsn.interpolation
-    ,   hsn.interpolation_tag
-    ,   hsn.way
-    ,   hsn.name
-    ,   first_value(tags_hsn) over(partition by osm_id) as first_tags_hsn
-    ,   unnest(range_hsn) as range_hsn
-
-    from hsn 
-    )
-    ,addressrangesfinal as (select 
-    	hsn_long.osm_id
-    ,   hsn_long.road_name
-    ,   hsn_long.way
-    ,   min(range_hsn) as min_hsn
-    ,   max(range_hsn) as max_hsn	
-    ,   hsn_long.index_searched_query
-    ,   ST_AsText(hsn_long.coordinates) as coordinates
-    ,   hsn_long.tags_network
-    ,   hsn_long.road_name_way
-    ,   hsn_long.interpolation
-    ,   hsn_long.road_names
-    ,   hsn_long.interpolation_tag
-    ,   hsn_long.name
-    ,   first_tags_hsn as tags
-    ,   array_agg(distinct range_hsn) as intermediates
-    from hsn_long
-    group by 
-    	hsn_long.osm_id
-    ,   hsn_long.index_searched_query
-    ,   coordinates
-    ,   hsn_long.road_name
-    ,   hsn_long.road_names
-    ,   hsn_long.tags_network
-    ,   hsn_long.road_name_way
-    ,   hsn_long.interpolation
-    ,   hsn_long.interpolation_tag
-    ,   hsn_long.way
-    ,   hsn_long.name
-    ,   first_tags_hsn
-    order by hsn_long.osm_id)
-
-    select 
-    plarea.osm_id as place_osm_id ,
-    plarea.name as place_name, 
-    plarea.reg_code as reg_code, 
-    plarea.region as place_region, 
-    plarea.cntry_code as place_cntry_code,
-    plarea.country as place_country, 
-    plarea.place as place_value,
-    --ST_AsText(plarea.way) as place_way,
-    --addressrangesfinal.*
-    addressrangesfinal.osm_id,
-    addressrangesfinal.road_name,
-    addressrangesfinal.min_hsn,
-    addressrangesfinal.max_hsn,
-    addressrangesfinal.tags_network,
-    addressrangesfinal.interpolation,
-    addressrangesfinal.road_names,
-    addressrangesfinal.name,
-    addressrangesfinal.tags,
-    addressrangesfinal.intermediates,
-    addressrangesfinal.way
-    from "{schemaName}".planet_osm_polygon as plarea
-    INNER JOIN addressrangesfinal ON ST_Intersects(ST_SetSRID(addressrangesfinal.way, 4326), ST_SetSRID(plarea.way, 4326))
-    where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30' and addressrangesfinal.interpolation != 'alphabetic'
-
-    """
+    query = f"""with sample as ( select index_searched_query, st_geomfromtext (coordinates, 4326) coordinates from ( VALUES (0, '{query_coordinates}') ) as t (index_searched_query, coordinates) ), tags as ( select distinct skeys(tags) keys from "{schemaName}".planet_osm_polygon pop where admin_level in ('4', '8') ), name_tags as ( select * from tags where ( keys like '%name:%' or keys like '%alt%name' ) and keys not like '%pronunciation%' ), hsn_tags as ( select distinct skeys(tags) keys from "{schemaName}".planet_osm_point where "addr:housenumber" is not null or tags :: text like '%addr:housenumber%' ), hsn_keys as ( select * from hsn_tags where (keys like '%addr:housenumber%') ), buffers as ( select sample.index_searched_query, sample.coordinates, coordinates as buffer, road.road as road_name, road.name_tags_array as road_names from sample left join lateral ( SELECT name as road, array_remove( tags -> array( ( select keys from name_tags ) ), null ) as name_tags_array FROM "{schemaName}".planet_osm_line road where name is not null and highway in ( 'motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link', 'tertiary', 'tertiary_link', 'unclassified', 'residential', 'service', 'living_street', 'road', 'steps', 'footway', 'path', 'pedestrian', 'bridleway', 'cycleway', 'track' ) ORDER BY road.way <-> sample.coordinates LIMIT 1 ) AS road on true ), address_ranges as ( select buffers.index_searched_query, buffers.coordinates, buffers.road_name, buffers.road_names, hnr.osm_id, ST_astext(hnr.way) way, hnr."addr:interpolation" as interpolation, hnr.tags, hnr.tags -> 'addr:street' as road_name_way, hnr.tags -> 'addr:interpolation' as interpolation_tag, hnr."name", unnest(ways.nodes) nodes from "{schemaName}".planet_osm_line hnr join buffers on ST_Intersects(buffers.buffer, hnr.way) join "{schemaName}".planet_osm_ways ways on ways.id = hnr.osm_id where hnr."addr:interpolation" is not null and hnr.tags -> 'layer_id' = '15633' ), hsn as ( select pop.tags as tags_hsn, array_remove( array_append( pop.tags -> array( ( select keys from hsn_keys ) ), pop."addr:housenumber" ), null ) as range_hsn, address_ranges.* from address_ranges left join "{schemaName}".planet_osm_point pop on pop.osm_id = address_ranges.nodes where pop.tags is not null and pop.tags -> 'layer_id' = '15633' ), hsn_long as ( select hsn.osm_id, hsn.index_searched_query, hsn.coordinates, hsn.tags as tags_network, hsn.road_name_way, hsn.road_name, hsn.road_names, hsn.interpolation, hsn.interpolation_tag, hsn.way, hsn.name, first_value(tags_hsn) over(partition by osm_id) as first_tags_hsn, unnest(range_hsn) as range_hsn from hsn ), addressrangesfinal as ( select hsn_long.osm_id, hsn_long.road_name, hsn_long.way, min(range_hsn) as min_hsn, max(range_hsn) as max_hsn, hsn_long.index_searched_query, ST_AsText(hsn_long.coordinates) as coordinates, hsn_long.tags_network, hsn_long.road_name_way, hsn_long.interpolation, hsn_long.road_names, hsn_long.interpolation_tag, hsn_long.name, first_tags_hsn as tags, array_agg(distinct range_hsn) as intermediates from hsn_long group by hsn_long.osm_id, hsn_long.index_searched_query, coordinates, hsn_long.road_name, hsn_long.road_names, hsn_long.tags_network, hsn_long.road_name_way, hsn_long.interpolation, hsn_long.interpolation_tag, hsn_long.way, hsn_long.name, first_tags_hsn order by hsn_long.osm_id ) select plarea.osm_id as place_osm_id, plarea.name as place_name, plarea.reg_code as reg_code, plarea.region as place_region, plarea.cntry_code as place_cntry_code, plarea.country as place_country, plarea.place as place_value, addressrangesfinal.osm_id, addressrangesfinal.road_name, addressrangesfinal.min_hsn, addressrangesfinal.max_hsn, addressrangesfinal.tags_network, addressrangesfinal.interpolation, addressrangesfinal.road_names, addressrangesfinal.name, addressrangesfinal.tags, addressrangesfinal.intermediates, addressrangesfinal.way from "{schemaName}".planet_osm_polygon as plarea INNER JOIN addressrangesfinal ON ST_Intersects( ST_SetSRID(addressrangesfinal.way, 4326), ST_SetSRID(plarea.way, 4326) ) where plarea.tags -> 'index:level' = '8' and plarea.tags -> 'index:priority:8' = '30' and addressrangesfinal.interpolation != 'alphabetic'
+"""
     print(query)
     AdminOrdr8Area = pd.read_sql_query(query, engine)
+
     return AdminOrdr8Area
+
 
 
 # Create a GeoPandas DataFrame
@@ -1019,7 +857,6 @@ addressrangesfinal.way
 from "{schema_name}".planet_osm_polygon as plarea
 INNER JOIN addressrangesfinal ON ST_Intersects(ST_SetSRID(addressrangesfinal.way, 4326), ST_SetSRID(plarea.way, 4326))
 where plarea.tags->'index:level'= '8' and plarea.tags->'index:priority:8'='30' and addressrangesfinal.interpolation != 'alphabetic'
-
 """
 
 outputpath = r"E:\\Amol\\9_addressRangesPython\\"
