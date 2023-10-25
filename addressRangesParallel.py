@@ -3,15 +3,13 @@ import numpy as np
 import psycopg2
 from psycopg2.extensions import connection
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import when, expr, udf,col,size,lit,count
-
+from pyspark.sql.functions import when, expr, udf, col, size, lit, count,explode,sum
 from pyspark.sql.types import StructType, StructField, StringType,ArrayType, IntegerType
 
 
 
 
 # Create Spark Session
-
 spark = SparkSession.builder.appName("Address Ranges Count by Country").getOrCreate()
 
 def parse_hnr_tags(tags, tags_network, interpolation):
@@ -300,7 +298,7 @@ conn = psycopg2.connect(host=host, database=database, user=user, password=passwo
 
 # Main Code
 all_dfs = []
-for country in ['aut']:
+for country in ['fra']:
     country_schema = get_country_schema(country,conn)
     adminOrder = adminAreaList(country_schema,'8',conn)
 
@@ -376,26 +374,44 @@ for country in ['aut']:
         # # Apply the UDF to the DataFrame
         df = df.withColumn("corrected_hnr_array", udf_correct_hnr_array(df["hnr_array"]))
         # Count the elements in the "corrected_hnr_array" column and create a new column "hnr_array_count"
-        df = df.withColumn("hnr_array_count", size(df["corrected_hnr_array"]))
-        # Select and keep only the specified columns
-        df = df.select("country","interpolation", "hnr_array_count","hnr_array", "intermediates" )
+        df = df.withColumn("hnr_array_count", size(col("corrected_hnr_array")).cast("int"))
+        # Filter out rows with empty arrays in the "corrected_hnr_array" column
+        df = df.filter(size(col("corrected_hnr_array")) > 0)
+        # Assuming you have a DataFrame named 'df'
+        df = df.withColumn("Road_Line", lit(1))
 
-        # Group by "country" and "interpolation," and count "hnr_array_count" for each group
-        df = df.groupBy("country", "interpolation").agg(count("hnr_array_count").alias("count"))
+        # # # Select and keep only the specified columns
+        df = df.select("country","interpolation", "hnr_array_count","hnr_array", "Road_Line" )
 
-        # df.show(truncate=False)
-        # break
-        all_dfs.append(df)
-# # Concatenate all DataFrames in all_dfs into a single DataFrame
-# final_df = all_dfs[0].union(*all_dfs[1:])
 
-# Concatenate the DataFrames and store the result in a new DataFrame
-concatenated_df = all_dfs[0]
-for df in all_dfs[1:]:
-    concatenated_df = concatenated_df.union(df)
+        #aggregations on the columns "hnr_array_count" and "Road_Line" for each group
 
-# Show the concatenated DataFrame
-concatenated_df.show()
+
+        df = df.groupBy("country", "interpolation").agg(sum("hnr_array_count").alias("expaned_addresses_count"),sum("Road_Line").alias("interpolation_line_count"))
+
+        df.show()
+
+        break
+
+
+
+
+        # # Group by "country" and "interpolation," and count "hnr_array_count" for each group
+        # df = df.groupBy("country", "interpolation").agg(count("hnr_array_count").alias("count"))
+
+        # To add row count, you can modify the aggregation like this:
+
+
+
+        # all_dfs.append(df)
+
+# # Concatenate the DataFrames and store the result in a new DataFrame
+# concatenated_df = all_dfs[0]
+# for df in all_dfs[1:]:
+#     concatenated_df = concatenated_df.union(df)
+#
+# # Show the concatenated DataFrame
+# concatenated_df.show()
 
 spark.stop()
 
